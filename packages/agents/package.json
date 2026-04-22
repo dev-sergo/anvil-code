@@ -1,0 +1,31 @@
+{
+  "name": "@rag-system/agents",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@rag-system/shared": "*",
+    "@rag-system/model-router": "*",
+    "@rag-system/rag": "*",
+    "@rag-system/code-graph": "*",
+    "@rag-system/safe-exec": "*",
+    "@rag-system/git-engine": "*",
+    "@rag-system/memory": "*",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "@types/node": "^20.14.0"
+  }
+}
