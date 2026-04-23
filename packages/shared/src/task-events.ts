@@ -9,12 +9,20 @@ export type TaskEventType =
   | 'step_fail'
   | 'step_skip'
   | 'agent_stream'
+  | 'coder_file_ready'
   | 'validation_start'
   | 'validation_pass'
   | 'validation_fail'
   | 'commit'
   | 'done'
-  | 'error';
+  | 'error'
+  // Indexing pipeline events. The "taskId" carries an indexId of the form
+  // `idx-<timestamp>` so SSE clients can subscribe to a specific indexing run
+  // via the same /task/:id/stream endpoint.
+  | 'index_start'
+  | 'index_file'
+  | 'index_skip'
+  | 'index_done';
 
 export interface TaskEvent {
   taskId: string;
@@ -27,8 +35,9 @@ export interface TaskEvent {
 const HISTORY_LIMIT = 200;
 
 // High-frequency event types skip the history buffer — they're for live consumers only.
-// Replaying agent token streams to late-joining SSE clients would be useless noise.
-const TRANSIENT_EVENTS = new Set<TaskEventType>(['agent_stream']);
+// Replaying agent token streams or per-file index ticks to late-joining SSE clients
+// would be useless noise; the start/done events stay in history for context.
+const TRANSIENT_EVENTS = new Set<TaskEventType>(['agent_stream', 'index_file', 'index_skip']);
 
 class TaskEventBus extends EventEmitter {
   private history = new Map<string, TaskEvent[]>();

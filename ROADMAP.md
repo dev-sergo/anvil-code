@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.12 работает (параллельная индексация файлов: глобальный embed-семафор)  
+**Статус проекта**: 🟢 v1.17 работает (streaming Coder/Fixer: файлы извлекаются partial-JSON парсером по мере прибытия)  
 **Последнее обновление**: 2026-04-23  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -293,6 +293,36 @@ node packages/api/dist/index.js
 - [x] API запускает `prune()` при старте + setInterval с `unref()` (не держит event loop живым)
 - [x] 4 теста backup-prune (старые/свежие, не-matching files, missing dir) + 3 теста taskLogger (bindings, level, isolation)
 
+### Multi-project v1.15 (✅ реализовано)
+- [x] `Project` модель + `ProjectRegistry` (top-level SQLite в `data/projects.db`): id (sha1 от absRoot), name, root, createdAt, lastAccessedAt
+- [x] `projectPaths(project)` — изолированный layout `data/projects/<id>/{memory.db, vectors/, graphs/, backups/}`
+- [x] `ProjectManager` — lazy lifecycle: контекст (MemoryStore + GraphRetriever + SafeWriter + BackupManager + GitEngine + Orchestrator) создаётся при первом обращении, кешируется
+- [x] `GraphRetriever` принимает `paths: {vectorsDir, graphsDir}` через конструктор — без cast-хаков
+- [x] `JobWorker` — две формы конструктора (legacy single-project, новая multi-project с `ProjectStoreLookup`); per-job `projectId` в Queue
+- [x] API endpoints: `GET /projects`, `GET /project/:id`, `POST /project { root, name? }`; `POST /task` принимает поле `project`; `GET /tasks?project=<id>` возвращает только задачи этого проекта
+- [x] Авто-регистрация default project на старте из `PROJECT_ROOT` (backwards compat: existing single-project users ничего не замечают)
+- [x] Graceful shutdown: `projects.closeAll()` + `registry.close()` корректно освобождают SQLite
+- [x] 23 новых теста: 10 для `ProjectRegistry` (id deriv, idempotency, list ordering, touch, unregister), 6 для `ProjectManager` (lazy create, isolation, closeContext/All), 7 e2e API (auto-register, project routing, task isolation между проектами через HTTP)
+
+### Streaming Coder v1.17 (✅ реализовано)
+- [x] `BaseAgent.streamLLM` — новый AsyncIterable-примитив (тот же `agent_stream` throttle, но yields chunks для тех, кто хочет реагировать на partial output); `callLLM` теперь обёртка над ним
+- [x] `partial-json.ts` — кастомный scanner: string-aware подсчёт `{}`, поддержка markdown fence, ignore unknown top-level keys, character-by-character устойчивость к chunk boundary в любом месте payload
+- [x] `CoderAgent.execute(..., onFileReady?)` и `FixerAgent.execute(..., onFileReady?)` — опциональный callback срабатывает на каждом готовом файле, не ждёт остальных; полная Zod-валидация по аккумулированному тексту в конце как раньше
+- [x] Новый event type `coder_file_ready { stepId, path, action, size, index }` — Cline видит файлы по мере их генерации
+- [x] Orchestrator передаёт callback и в Coder, и в Fixer (с `source: 'fixer'` для разделения в UI)
+- [x] Self-healing semantics не сломаны: файлы НЕ пишутся на диск рано, Reviewer видит полный список перед approval
+- [x] 14 новых тестов: 10 для partial-JSON parser (string-awareness, escaped quotes, fence, malformed entry skip, 1-byte chunks через все границы, incomplete stream) + 4 для CoderAgent streaming (per-file callback порядок, no-callback fallback, fenced stream, callback ДО разрешения promise)
+
+### MCP проекты v1.16 (✅ реализовано)
+- [x] MCP server использует тот же `ProjectRegistry`+`ProjectManager`, что и API (общий `data/projects.db`)
+- [x] Auto-register default project из `PROJECT_ROOT` если registry пуст — backwards compat для single-project пользователей
+- [x] Новые tools: `list_projects` (markdown table с пометкой default), `register_project { root, name? }` (idempotent)
+- [x] Optional `project_id` на: `index_codebase`, `search_code`, `get_related_code`, `run_task`, `list_decisions`, `add_decision` — без id используется default
+- [x] `run_task` форвардит `project_id` в `POST /task` API; `get_task_status` использует API-роутинг (queue знает project_id)
+- [x] Resources `adr://*`, `failures://top`, `tasks://recent` показывают данные default project; новый `projects://list` resource для discovery
+- [x] Tool responses подсказывают `project_id` синтаксис → Cline сам быстро учится переключаться между проектами
+- [x] Instructions сервера явно упоминают multi-project флоу
+
 ### Дальнейшие улучшения
 
 ### Пользовательский опыт
@@ -333,8 +363,24 @@ node packages/api/dist/index.js
 - [x] `FILE_CONCURRENCY=4` (default), `EMBED_CONCURRENCY=8` — комбинация даёт ~5-8× speedup на холодном кеше без перегрузки Ollama (peak in-flight = `embedConcurrency`, не `files × symbols`)
 - [x] 4 теста codebase-parallel: глобальный cap соблюдается через границы файлов, file-level concurrency = 3 для 1-symbol файлов, wall-time < serial baseline, корректность при пустом файле в составе батча
 
+### Tolerant JSON v1.13 (✅ реализовано)
+- [x] `tryParseJsonTolerant<T>(raw)` — strict-first, затем pipeline из 6 фиксеров (BOM, code-fence, extract-from-prose, comments, trailing-commas, escape-control-in-strings)
+- [x] Каждый фиксер запускается с учётом строковых литералов (не ломает `//` в URL, `}` внутри string и т.п.)
+- [x] BaseAgent.parseJSON → теперь tolerant; логирует `fixes: [...]` через `logger.warn` если ремонт сработал — частые ремонты подсказывают, что промпт нужно подкрутить
+- [x] При полном фейле — отдельная ошибка с `tried: [...]` для диагностики (видно сколько фиксеров пробовали)
+- [x] 15 тестов: trailing comma, code fence, extract from prose, BOM, JS-style comments, multi-line string без escape, комбо (фенс + comma + проза), nested braces в строках, греедность extractor
+
+### Live прогресс индексации v1.14 (✅ реализовано)
+- [x] Новые event types: `index_start`, `index_file`, `index_skip`, `index_done` в `TaskEventType`
+- [x] `indexCodebase(rootDir, opts)` теперь возвращает `indexId` (`idx-<timestamp>` если не передан)
+- [x] События публикуются на канале `task:<indexId>` — SSE-клиенты используют тот же `GET /task/:id/stream` endpoint
+- [x] Throttle 200мс на per-file events (1000-файлов репо не флудит); последний файл всегда эмитит для percent=100
+- [x] `index_file`/`index_skip` помечены transient — не засоряют ring-buffer; `index_start`/`index_done` остаются для replay поздним подписчикам
+- [x] Payload: `{file, processed, totalFiles, indexed, skipped, percent}` — UI рисует прогресс-бар без расчётов
+- [x] MCP `index_codebase` tool возвращает indexId + URL стрима в response — Cline сразу подсказывает пользователю как смотреть прогресс
+- [x] 5 тестов: правильный порядок start→done, percent=100 на последнем файле, авто-генерация indexId, transient не в history, skipped events на повторной индексации
+
 ### Производительность (следующее)
-- [ ] Прогресс-эвенты при индексации (через тот же `taskEvents` для SSE)
 
 ---
 

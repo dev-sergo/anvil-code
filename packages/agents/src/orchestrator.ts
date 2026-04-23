@@ -263,7 +263,21 @@ export class Orchestrator {
     const design = await this.architect.execute(step.description, stepContext, mode);
 
     const promptContext = `Design Context:\n${design.design}\n\nCodebase Context:\n${stepContext}`;
-    const codeChanges = await this.coder.execute(step.description, promptContext, mode);
+    const onCoderFile = (file: { path: string; content: string; action: string }, index: number) => {
+      taskEvents.emitEvent({
+        taskId,
+        type: 'coder_file_ready',
+        message: `Coder produced ${file.path}`,
+        data: {
+          stepId: step.id,
+          path: file.path,
+          action: file.action,
+          size: file.content.length,
+          index,
+        },
+      });
+    };
+    const codeChanges = await this.coder.execute(step.description, promptContext, mode, onCoderFile);
 
     const testChanges = await this.tester.execute(codeChanges.files, stepContext, mode);
 
@@ -291,7 +305,22 @@ export class Orchestrator {
           consequences: 'Invoked FixerAgent to resolve issues.',
         });
 
-        const fixerResult = await this.fixer.execute(review.issues, currentChanges, stepContext, mode);
+        const fixerResult = await this.fixer.execute(
+          review.issues, currentChanges, stepContext, mode,
+          (file, index) => taskEvents.emitEvent({
+            taskId,
+            type: 'coder_file_ready',
+            message: `Fixer produced ${file.path}`,
+            data: {
+              stepId: step.id,
+              path: file.path,
+              action: file.action,
+              size: file.content.length,
+              index,
+              source: 'fixer',
+            },
+          }),
+        );
         currentChanges = fixerResult.files;
       }
     }

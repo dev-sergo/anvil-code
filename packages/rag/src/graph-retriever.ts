@@ -2,7 +2,7 @@ import path from 'path';
 import crypto from 'crypto';
 import fs from 'fs';
 import { glob } from 'glob';
-import { config, logger } from '@rag-system/shared';
+import { config, logger, taskEvents } from '@rag-system/shared';
 import { OllamaClient } from '@rag-system/model-router';
 import { ASTParser, CodeGraph } from '@rag-system/code-graph';
 import { VectorStore } from './vector-store.js';
@@ -33,9 +33,9 @@ export class GraphRetriever {
   // in-flight files & symbols. Cache hits don't acquire it.
   private embedSemaphore: Semaphore;
 
-  constructor(store?: RetrieverStore) {
-    this.vectorStore = new VectorStore();
-    this.codeGraph = new CodeGraph();
+  constructor(store?: RetrieverStore, paths?: { vectorsDir?: string; graphsDir?: string }) {
+    this.vectorStore = new VectorStore(paths?.vectorsDir);
+    this.codeGraph = new CodeGraph(paths?.graphsDir);
     this.ollamaClient = new OllamaClient();
     this.parser = new ASTParser();
     this.store = store ?? null;
@@ -158,7 +158,8 @@ export class GraphRetriever {
     await this.codeGraph.saveToDisk();
   }
 
-  async indexCodebase(rootDir: string): Promise<void> {
+  async indexCodebase(rootDir: string, opts: { indexId?: string } = {}): Promise<string> {
+    const indexId = opts.indexId ?? `idx-${Date.now()}`;
     const absRoot = path.resolve(rootDir);
     const patterns = config.codeGraph.include.map(p => path.join(absRoot, p));
     const ignore = config.codeGraph.exclude.map(e => `**/${e}/**`);
@@ -171,11 +172,44 @@ export class GraphRetriever {
 
     let indexed = 0;
     let skipped = 0;
+    let processed = 0;
+    const startedAt = Date.now();
+    let lastTickAt = 0;
 
     logger.info(
-      { files: files.length, root: absRoot, fileConcurrency: config.rag.fileConcurrency },
+      { indexId, files: files.length, root: absRoot, fileConcurrency: config.rag.fileConcurrency },
       'Indexing codebase',
     );
+
+    taskEvents.emitEvent({
+      taskId: indexId,
+      type: 'index_start',
+      message: `Indexing ${files.length} file(s)`,
+      data: { root: absRoot, totalFiles: files.length },
+    });
+
+    // Throttle per-file events so a 1000-file repo doesn't fire 1000 events.
+    // We always emit on the very last file so SSE clients see 100% complete.
+    const TICK_MS = 200;
+    const tickIfDue = (eventType: 'index_file' | 'index_skip', file: string) => {
+      processed++;
+      const now = Date.now();
+      const isLast = processed === files.length;
+      if (!isLast && now - lastTickAt < TICK_MS) return;
+      lastTickAt = now;
+      taskEvents.emitEvent({
+        taskId: indexId,
+        type: eventType,
+        data: {
+          file,
+          processed,
+          totalFiles: files.length,
+          indexed,
+          skipped,
+          percent: Math.round((processed / Math.max(1, files.length)) * 100),
+        },
+      });
+    };
 
     // File-level pMap controls how many files we parse + queue embeddings for at once.
     // Per-file embed traffic is independently capped by the global embedSemaphore, so
@@ -191,21 +225,34 @@ export class GraphRetriever {
         }
         if (this.store.getFileHash(file) === currentHash) {
           skipped++;
+          tickIfDue('index_skip', file);
           return;
         }
         await this.indexFile(file);
         this.store.saveFileHash(file, currentHash);
         indexed++;
+        tickIfDue('index_file', file);
       } else {
         await this.indexFile(file);
         indexed++;
+        tickIfDue('index_file', file);
       }
     });
 
     await this.vectorStore.save();
     await this.codeGraph.saveToDisk();
 
-    logger.info({ indexed, skipped, vectors: this.vectorStore.size }, 'Codebase indexed');
+    const durationMs = Date.now() - startedAt;
+    logger.info({ indexId, indexed, skipped, vectors: this.vectorStore.size, durationMs }, 'Codebase indexed');
+
+    taskEvents.emitEvent({
+      taskId: indexId,
+      type: 'index_done',
+      message: `Indexed ${indexed} file(s), skipped ${skipped}`,
+      data: { indexed, skipped, totalFiles: files.length, vectors: this.vectorStore.size, durationMs },
+    });
+
+    return indexId;
   }
 
   async loadFromDisk(): Promise<void> {

@@ -26,8 +26,13 @@ export const config = {
   },
   logLevel: env('LOG_LEVEL', 'info'),
   projectRoot: env('PROJECT_ROOT', process.cwd()),
+  dataRoot: env('DATA_ROOT', 'data'),
   memory: {
     dbPath: env('MEMORY_DB_PATH', 'data/memory.db'),
+  },
+  projects: {
+    registryPath: env('PROJECT_REGISTRY_PATH', 'data/projects.db'),
+    autoRegisterDefault: envBool('PROJECTS_AUTO_REGISTER_DEFAULT', true),
   },
   codeGraph: {
     include: env('CODE_GRAPH_INCLUDE', '**/*.ts,**/*.js,**/*.tsx,**/*.jsx,**/*.py,**/*.rs,**/*.go').split(','),

@@ -71,7 +71,21 @@ describe('GET /task/:id/stream', () => {
   beforeEach(async () => {
     taskEvents.clearHistory('tsk-stream');
     taskEvents.removeAllListeners('task:tsk-stream');
-    app = buildServer(fakeQueue() as never, fakeStore() as never) as unknown as FastifyServer;
+    const fakeRegistry = {
+      get: () => ({ id: 'p-test', name: 'p', root: '/', createdAt: 0, lastAccessedAt: 0 }),
+      list: () => [],
+      register: () => ({ id: 'p-test', name: 'p', root: '/', createdAt: 0, lastAccessedAt: 0 }),
+    };
+    const fakeProjects = {
+      get: async () => ({ store: fakeStore(), project: { id: 'p-test' } }),
+      loaded: () => [],
+    };
+    app = buildServer({
+      queue: fakeQueue() as never,
+      registry: fakeRegistry as never,
+      projects: fakeProjects as never,
+      defaultProjectId: 'p-test',
+    }) as unknown as FastifyServer;
     const addr = await app.listen({ port: 0, host: '127.0.0.1' });
     baseUrl = addr.replace(/\/+$/, '');
   });

@@ -16,7 +16,8 @@
     "@rag-system/model-router": "*",
     "@rag-system/rag": "*",
     "@rag-system/code-graph": "*",
-    "@rag-system/memory": "*"
+    "@rag-system/memory": "*",
+    "@rag-system/agents": "*"
   },
   "devDependencies": {
     "typescript": "^5.4.5",

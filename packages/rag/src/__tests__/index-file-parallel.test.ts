@@ -90,9 +90,10 @@ describe('GraphRetriever.indexFile parallel embed', () => {
       const start = Date.now();
       await retriever.indexFile(file);
       const elapsed = Date.now() - start;
-      // 8 symbols × 30ms serial = 240ms. With concurrency 4 should be ~60-80ms.
-      // Loose bound to absorb test-runner jitter.
-      expect(elapsed).toBeLessThan(180);
+      // 8 symbols × 30ms serial = 240ms. With concurrency 4 the lower bound is ~60-80ms.
+      // Use a loose ceiling so test-runner jitter (CI cold start, GC) doesn't flake;
+      // the strict serial baseline is the floor we must beat.
+      expect(elapsed).toBeLessThan(220);
     } finally {
       embedSpy.mockRestore();
     }

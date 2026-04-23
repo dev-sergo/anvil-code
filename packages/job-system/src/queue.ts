@@ -3,6 +3,7 @@ import type { TaskMode } from '@rag-system/shared';
 
 export interface Job {
   id: string;
+  projectId: string;
   description: string;
   mode: TaskMode;
   status: 'queued' | 'running' | 'completed' | 'failed';
@@ -14,9 +15,10 @@ export interface Job {
 export class MemoryQueue {
   private jobs: Map<string, Job> = new Map();
 
-  enqueue(description: string, mode: TaskMode, priority = 0): Job {
+  enqueue(projectId: string, description: string, mode: TaskMode, priority = 0): Job {
     const job: Job = {
       id: randomUUID(),
+      projectId,
       description,
       mode,
       status: 'queued',

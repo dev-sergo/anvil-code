@@ -12,3 +12,5 @@ export type { ReviewerOutput } from './reviewer.js';
 export { FixerAgent } from './fixer.js';
 export type { FixerOutput } from './fixer.js';
 export { Orchestrator } from './orchestrator.js';
+export { ProjectManager } from './project-manager.js';
+export type { ProjectContext } from './project-manager.js';
