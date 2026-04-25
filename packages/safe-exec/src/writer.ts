@@ -16,6 +16,10 @@ export class SafeWriter {
     this.diff = new DiffEngine();
   }
 
+  get root(): string {
+    return this.projectRoot;
+  }
+
   execute(change: FileChange): void {
     const resolved = this.resolveSafe(change.path);
 

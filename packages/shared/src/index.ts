@@ -5,3 +5,7 @@ export { taskEvents } from './task-events.js';
 export type { TaskEvent, TaskEventType } from './task-events.js';
 export { withTaskContext, withAgent, currentTaskContext } from './task-context.js';
 export type { TaskContext } from './task-context.js';
+export { readProjectConventions } from './project-conventions.js';
+export type { ProjectConventions } from './project-conventions.js';
+export { buildPromptContext } from './prompt-context.js';
+export type { PromptContextInput } from './prompt-context.js';

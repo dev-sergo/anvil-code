@@ -57,6 +57,8 @@ export const config = {
   },
   agents: {
     parallelism: Math.max(1, envInt('AGENTS_PARALLELISM', 3)),
+    testerEnabled: envBool('TESTER_ENABLED', true),
+    plannerMaxSteps: Math.max(1, envInt('PLANNER_MAX_STEPS', 50)),
   },
   safeExec: {
     dryRun: envBool('SAFE_EXEC_DRY_RUN', false),
@@ -68,6 +70,7 @@ export const config = {
   git: {
     defaultBranch: env('GIT_DEFAULT_BRANCH', 'main'),
     branchPrefix: env('GIT_BRANCH_PREFIX', 'auto/task'),
+    commitOnlyIfValid: envBool('COMMIT_ONLY_IF_VALID', true),
   },
   // flat alias used by orchestrator
   JOB_MAX_RETRIES: envInt('JOB_MAX_RETRIES', 3),

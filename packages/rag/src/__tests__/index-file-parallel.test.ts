@@ -16,17 +16,20 @@ vi.mock('@rag-system/shared', async () => {
 });
 
 // HNSW native binding is slow to spin up in tests — stub it.
-vi.mock('hnswlib-node', () => ({
-  HierarchicalNSW: class {
-    initIndex(): void {}
-    resizeIndex(): void {}
-    addPoint(): void {}
-    searchKnn(): { neighbors: number[]; distances: number[] } { return { neighbors: [], distances: [] }; }
-    writeIndexSync(): void {}
-    readIndexSync(): void {}
-    markDelete(): void {}
-  },
-}));
+vi.mock('hnswlib-node', async () => {
+  const { writeFileSync } = await import('fs');
+  return {
+    HierarchicalNSW: class {
+      initIndex(): void {}
+      resizeIndex(): void {}
+      addPoint(): void {}
+      searchKnn(): { neighbors: number[]; distances: number[] } { return { neighbors: [], distances: [] }; }
+      writeIndexSync(p: string): void { writeFileSync(p, ''); }
+      readIndexSync(): void {}
+      markDelete(): void {}
+    },
+  };
+});
 
 const { GraphRetriever } = await import('../graph-retriever.js');
 const { OllamaClient } = await import('@rag-system/model-router');

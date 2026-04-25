@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.17 работает (streaming Coder/Fixer: файлы извлекаются partial-JSON парсером по мере прибытия)  
+**Статус проекта**: 🟢 v1.18 работает (VSCode extension: GUI sidebar с проектами, задачами и live SSE)  
 **Последнее обновление**: 2026-04-23  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -303,6 +303,20 @@ node packages/api/dist/index.js
 - [x] Авто-регистрация default project на старте из `PROJECT_ROOT` (backwards compat: existing single-project users ничего не замечают)
 - [x] Graceful shutdown: `projects.closeAll()` + `registry.close()` корректно освобождают SQLite
 - [x] 23 новых теста: 10 для `ProjectRegistry` (id deriv, idempotency, list ordering, touch, unregister), 6 для `ProjectManager` (lazy create, isolation, closeContext/All), 7 e2e API (auto-register, project routing, task isolation между проектами через HTTP)
+
+### VSCode Extension v1.18 (✅ реализовано)
+- [x] Новый workspace `packages/vscode-extension` (12-й пакет монорепо), bundle через esbuild → `dist/extension.js` (~18 KB), VSCode инжектит `vscode` модуль
+- [x] Activity bar с 🚀 иконкой, два TreeView: **Projects** (со звёздочкой на активном) и **Tasks** (со spinner-иконкой для running)
+- [x] Status bar item показывает активный проект; клик → quick-pick переключения
+- [x] Команды: `RAG: Refresh`, `Set API URL`, `Run Task` (prompt + mode picker → POST /task → авто-стрим), `Index Active Project` (POST /index → авто-стрим), `Register Project`, `Stream Task Progress`, `Select Active Project`
+- [x] OutputChannel "RAG System" — каждый SSE event форматируется в одну читаемую строку: `[HH:MM:SS.mmm] STEP→`, `STEP✓`, `Coder +52b total=1284b ...`, `FILE create src/foo.ts (1247b)`, `IDX 67% (89/132) src/bar.ts`, etc.
+- [x] Polling `/tasks` каждые 5с (настраивается `ragSystem.refreshIntervalMs`) — статус queued→running→completed обновляется без ручного refresh
+- [x] Активный проект сохраняется в `workspaceState` — каждый workspace помнит свой выбор между перезапусками VSCode
+- [x] Auto-pick первого проекта как активного, если ничего не выбрано
+- [x] **Новый API endpoint** `POST /index { project?, root? }` — нужен extension'у чтобы триггерить индексацию без MCP
+- [x] 12 тестов: 5 для SSE-парсера (heartbeat, malformed JSON, multi-data lines, missing data) + 7 для форматтеров (все 19 event types → readable lines, truncation для длинных chunks, fallback для unknown events, task tooltip, project label со звёздочкой)
+- [x] README с инструкциями: `npm install` → F5 (Extension Development Host) → 🚀 в activity bar
+- [x] Test isolation fix: HNSW mock теперь реально создаёт `.tmp` файл (раньше `writeIndexSync` был no-op, что ломало `vectorStore.save()` rename → `index.hnsw`); fix применён к 5 тестовым файлам
 
 ### Streaming Coder v1.17 (✅ реализовано)
 - [x] `BaseAgent.streamLLM` — новый AsyncIterable-примитив (тот же `agent_stream` throttle, но yields chunks для тех, кто хочет реагировать на partial output); `callLLM` теперь обёртка над ним

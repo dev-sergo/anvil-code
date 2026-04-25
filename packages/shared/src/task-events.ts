@@ -14,6 +14,7 @@ export type TaskEventType =
   | 'validation_pass'
   | 'validation_fail'
   | 'commit'
+  | 'commit_skipped'
   | 'done'
   | 'error'
   // Indexing pipeline events. The "taskId" carries an indexId of the form

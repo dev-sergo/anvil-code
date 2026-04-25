@@ -14,17 +14,20 @@ vi.mock('@rag-system/shared', async () => {
 vi.mock('@fastify/rate-limit', () => ({ default: async () => undefined }));
 
 // Stub HNSW so the lazy GraphRetriever creation doesn't load the native binding
-vi.mock('hnswlib-node', () => ({
-  HierarchicalNSW: class {
-    initIndex(): void {}
-    resizeIndex(): void {}
-    addPoint(): void {}
-    searchKnn(): { neighbors: number[]; distances: number[] } { return { neighbors: [], distances: [] }; }
-    writeIndexSync(): void {}
-    readIndexSync(): void {}
-    markDelete(): void {}
-  },
-}));
+vi.mock('hnswlib-node', async () => {
+  const { writeFileSync } = await import('fs');
+  return {
+    HierarchicalNSW: class {
+      initIndex(): void {}
+      resizeIndex(): void {}
+      addPoint(): void {}
+      searchKnn(): { neighbors: number[]; distances: number[] } { return { neighbors: [], distances: [] }; }
+      writeIndexSync(p: string): void { writeFileSync(p, ''); }
+      readIndexSync(): void {}
+      markDelete(): void {}
+    },
+  };
+});
 
 const { ProjectRegistry } = await import('@rag-system/memory');
 const { ProjectManager } = await import('@rag-system/agents');

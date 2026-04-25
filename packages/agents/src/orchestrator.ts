@@ -9,7 +9,16 @@ import { ArchitectAgent } from './architect.js';
 import { TesterAgent } from './tester.js';
 import { ReviewerAgent } from './reviewer.js';
 import { FixerAgent } from './fixer.js';
-import { FileChange, config, taskEvents, taskLogger, withTaskContext } from '@rag-system/shared';
+import {
+  FileChange,
+  config,
+  taskEvents,
+  taskLogger,
+  withTaskContext,
+  readProjectConventions,
+  buildPromptContext,
+  type ProjectConventions,
+} from '@rag-system/shared';
 
 export class Orchestrator {
   private planner: PlannerAgent;
@@ -20,6 +29,7 @@ export class Orchestrator {
   private fixer: FixerAgent;
   private typeChecker: TypeChecker;
   private testRunner: TestRunner;
+  private conventions: ProjectConventions | null = null;
 
   constructor(
     private router: ModelRouter,
@@ -34,8 +44,17 @@ export class Orchestrator {
     this.tester = new TesterAgent(router);
     this.reviewer = new ReviewerAgent(router);
     this.fixer = new FixerAgent(router);
-    this.typeChecker = new TypeChecker(config.projectRoot);
-    this.testRunner = new TestRunner(config.projectRoot);
+    // Validators run against the project root the writer is bound to so
+    // multi-project setups check the right codebase.
+    this.typeChecker = new TypeChecker(this.writer.root);
+    this.testRunner = new TestRunner(this.writer.root);
+  }
+
+  private getConventions(): ProjectConventions {
+    if (!this.conventions) {
+      this.conventions = readProjectConventions(this.writer.root);
+    }
+    return this.conventions;
   }
 
   async runTask(taskId: string, description: string, mode: 'fast'|'balanced'|'deep' = 'balanced') {
@@ -45,13 +64,37 @@ export class Orchestrator {
     // 1. Create Git Branch
     await this.git.createBranchForTask(taskId);
 
-    // 2. Retrieve Context
-    const context = await this.retriever.retrieveContext(description);
+    // 2. Retrieve context + load project conventions.
+    // Planner only needs a high-level view; it doesn't write files, so we feed it
+    // the lighter string context. Full source files enter the prompt at step level
+    // where Coder/Fixer/Tester actually need to preserve imports/style.
+    const conventions = this.getConventions();
+    const items = await this.retriever.retrieveContextItems(description);
+    const ragSnippets = items
+      .map(i => `// ${i.filePath}:${i.startLine}\n${i.text}`)
+      .join('\n\n---\n\n');
+    const plannerContext = buildPromptContext({
+      conventions,
+      ragSnippets,
+      ragFilePaths: [],
+      projectRoot: this.writer.root,
+    });
 
     // 3. Plan
     const plan = await withTaskContext({ taskId }, () =>
-      this.planner.execute(description, context, mode),
+      this.planner.execute(description, plannerContext, mode),
     );
+    // Truncate if Planner over-produced. We keep the head and strip dangling deps
+    // so the scheduler can still execute the remaining steps cleanly.
+    const cap = config.agents.plannerMaxSteps;
+    if (plan.steps.length > cap) {
+      log.warn({ generated: plan.steps.length, cap }, 'Planner exceeded PLANNER_MAX_STEPS — truncating');
+      const kept = new Set(plan.steps.slice(0, cap).map(s => s.id));
+      plan.steps = plan.steps.slice(0, cap).map(s => ({
+        ...s,
+        dependencies: s.dependencies.filter(d => kept.has(d)),
+      }));
+    }
     log.info({ steps: plan.steps.length }, 'Plan generated');
     taskEvents.emitEvent({
       taskId,
@@ -86,18 +129,28 @@ export class Orchestrator {
     }
 
     // 6. Validation loop: typecheck + tests, with Fixer retries
-    await withTaskContext({ taskId }, () =>
+    const validation = await withTaskContext({ taskId }, () =>
       this.runValidationLoop(taskId, allFileChanges, mode, log),
     );
 
-    // 7. Commit
-    if (writtenFiles.length > 0) {
+    // 7. Commit — skip if validation failed and the strict flag is on.
+    // Branch still exists for the operator to inspect; nothing is lost.
+    const shouldSkipCommit = !validation.passed && config.git.commitOnlyIfValid;
+    if (writtenFiles.length > 0 && !shouldSkipCommit) {
       await this.git.commitChanges(taskId, `Complete task: ${description.substring(0, 50)}`, writtenFiles);
       taskEvents.emitEvent({
         taskId,
         type: 'commit',
         message: `Committed ${writtenFiles.length} file(s)`,
         data: { fileCount: writtenFiles.length },
+      });
+    } else if (writtenFiles.length > 0 && shouldSkipCommit) {
+      log.warn({ issuesCount: validation.issuesCount }, 'Skipping commit — validation failed');
+      taskEvents.emitEvent({
+        taskId,
+        type: 'commit_skipped',
+        message: `Commit skipped — ${validation.issuesCount} unresolved validation issue(s). Files remain on auto-branch for inspection.`,
+        data: { fileCount: writtenFiles.length, issuesCount: validation.issuesCount },
       });
     }
 
@@ -259,10 +312,35 @@ export class Orchestrator {
     mode: 'fast'|'balanced'|'deep',
     log: ReturnType<typeof taskLogger>,
   ): Promise<FileChange[]> {
-    const stepContext = await this.retriever.retrieveContext(step.description);
-    const design = await this.architect.execute(step.description, stepContext, mode);
+    const conventions = this.getConventions();
+    const items = await this.retriever.retrieveContextItems(step.description);
+    const ragSnippets = items
+      .map(i => `// ${i.filePath}:${i.startLine}\n${i.text}`)
+      .join('\n\n---\n\n');
+    // Collect unique file paths mentioned by RAG so we can read full source.
+    // This is what lets Coder preserve imports and style when modifying.
+    const ragFilePaths = Array.from(new Set(items.map(i => i.filePath)));
 
-    const promptContext = `Design Context:\n${design.design}\n\nCodebase Context:\n${stepContext}`;
+    const design = await this.architect.execute(
+      step.description,
+      buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root }),
+      mode,
+    );
+
+    const promptContext = buildPromptContext({
+      conventions,
+      ragSnippets,
+      ragFilePaths,
+      projectRoot: this.writer.root,
+      designContext: design.design,
+    });
+    // Leaner variant for Reviewer/Tester that already see files inline in their own prompt.
+    const reviewContext = buildPromptContext({
+      conventions,
+      ragSnippets,
+      ragFilePaths: [],
+      projectRoot: this.writer.root,
+    });
     const onCoderFile = (file: { path: string; content: string; action: string }, index: number) => {
       taskEvents.emitEvent({
         taskId,
@@ -279,9 +357,23 @@ export class Orchestrator {
     };
     const codeChanges = await this.coder.execute(step.description, promptContext, mode, onCoderFile);
 
-    const testChanges = await this.tester.execute(codeChanges.files, stepContext, mode);
-
-    let currentChanges: FileChange[] = [...codeChanges.files, ...testChanges.testFiles];
+    let currentChanges: FileChange[] = [...codeChanges.files];
+    if (config.agents.testerEnabled) {
+      try {
+        const testChanges = await this.tester.execute(codeChanges.files, reviewContext, mode);
+        currentChanges.push(...testChanges.testFiles);
+      } catch (e) {
+        // Tester is best-effort. A bad LLM JSON or schema mismatch must not blow up
+        // the whole step — Coder's output is still valuable on its own. Reviewer
+        // and validation still run on the production files.
+        log.warn(
+          { stepId: step.id, error: e instanceof Error ? e.message : String(e) },
+          'Tester failed — continuing without generated tests',
+        );
+      }
+    } else {
+      log.debug({ stepId: step.id }, 'Tester disabled via TESTER_ENABLED=false');
+    }
 
     let attempt = 0;
     const MAX_RETRIES = config.JOB_MAX_RETRIES;
@@ -289,7 +381,7 @@ export class Orchestrator {
 
     while (attempt < MAX_RETRIES && !isApproved) {
       attempt++;
-      const review = await this.reviewer.execute(step.description, currentChanges, stepContext, mode);
+      const review = await this.reviewer.execute(step.description, currentChanges, reviewContext, mode);
 
       if (review.isApproved) {
         isApproved = true;
@@ -306,7 +398,7 @@ export class Orchestrator {
         });
 
         const fixerResult = await this.fixer.execute(
-          review.issues, currentChanges, stepContext, mode,
+          review.issues, currentChanges, promptContext, mode,
           (file, index) => taskEvents.emitEvent({
             taskId,
             type: 'coder_file_ready',
@@ -337,7 +429,7 @@ export class Orchestrator {
     allFileChanges: FileChange[],
     mode: 'fast'|'balanced'|'deep',
     log: ReturnType<typeof taskLogger>,
-  ): Promise<void> {
+  ): Promise<{ passed: boolean; issuesCount: number }> {
     const MAX_VALIDATION_RETRIES = 2;
     let attempt = 0;
 
@@ -371,11 +463,11 @@ export class Orchestrator {
           message: 'Validation passed',
           data: { typeCheck: typeResult.skipped ?? 'passed', tests: testResult.skipped ?? 'passed' },
         });
-        return;
+        return { passed: true, issuesCount: 0 };
       }
 
       if (attempt === MAX_VALIDATION_RETRIES) {
-        log.warn({ attempt, issues: issues.length }, 'Validation still failing after retries — committing anyway');
+        log.warn({ attempt, issues: issues.length }, 'Validation still failing after retries');
         this.store.saveFailure(
           `validation-failure:${issues[0].slice(0, 100)}`,
           'Exhausted Fixer retries; manual review needed',
@@ -386,13 +478,23 @@ export class Orchestrator {
           message: `Validation failed after ${MAX_VALIDATION_RETRIES + 1} attempts`,
           data: { issueCount: issues.length, firstIssue: issues[0].slice(0, 200) },
         });
-        return;
+        return { passed: false, issuesCount: issues.length };
       }
 
       attempt++;
       log.warn({ attempt, issues: issues.length }, 'Validation failed, running Fixer');
 
-      const fixResult = await this.fixer.execute(issues, allFileChanges, '', mode);
+      // Give the validation-loop Fixer the same rich context Coder got, plus
+      // full source of every file we've written so far — so it can see what
+      // imports/types are actually in place when patching.
+      const conventions = this.getConventions();
+      const validationContext = buildPromptContext({
+        conventions,
+        ragSnippets: '',
+        ragFilePaths: allFileChanges.map(c => c.path),
+        projectRoot: this.writer.root,
+      });
+      const fixResult = await this.fixer.execute(issues, allFileChanges, validationContext, mode);
 
       // Re-write fixed files and update tracking
       for (const fixed of fixResult.files) {
@@ -410,6 +512,7 @@ export class Orchestrator {
         consequences: `Invoked FixerAgent (attempt ${attempt}/${MAX_VALIDATION_RETRIES}).`,
       });
     }
+    return { passed: false, issuesCount: 0 };
   }
 }
 

@@ -13,8 +13,23 @@ export type FixerOutput = z.infer<typeof FixerOutputSchema>;
 export class FixerAgent extends BaseAgent {
   name = 'Fixer';
   role: ModelRole = 'fixer';
-  systemPrompt = `You are a Code Fixer. Fix the code based on review issues.
-Output ONLY valid JSON: { "files": [{ "path": "src/file.ts", "content": "...", "action": "modify" }] }`;
+  systemPrompt = `You are a Code Fixer. Fix the listed issues with minimal, surgical edits.
+
+Rules:
+1. The "# Existing project files (READ-ONLY reference)" block uses BEGIN FILE / END FILE
+   markers ONLY to delimit reference material. NEVER copy these markers, file paths,
+   or other files' contents into your output.
+2. Preserve every import, type, and export not directly implicated by the issues.
+3. Follow the "# Project Conventions" block strictly:
+   - If "Import paths MUST include .js suffix" appears, ALL relative imports MUST
+     end in .js, even when the source file is .ts.
+   - Use the specified test framework (e.g. vitest), never jest if vitest is listed.
+4. Address ONLY the listed issues. Do not rewrite working code to "improve" it.
+5. If an issue says "Cannot find name X", restore the missing import or declaration
+   rather than deleting the code that uses X.
+
+Output ONLY valid JSON:
+{ "files": [{ "path": "src/file.ts", "content": "...", "action": "modify" }] }`;
 
   async execute(
     issues: string[],

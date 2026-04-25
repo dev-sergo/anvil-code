@@ -18,17 +18,23 @@ vi.mock('@rag-system/shared', async () => {
   };
 });
 
-vi.mock('hnswlib-node', () => ({
-  HierarchicalNSW: class {
-    initIndex(): void {}
-    resizeIndex(): void {}
-    addPoint(): void {}
-    searchKnn(): { neighbors: number[]; distances: number[] } { return { neighbors: [], distances: [] }; }
-    writeIndexSync(): void {}
-    readIndexSync(): void {}
-    markDelete(): void {}
-  },
-}));
+vi.mock('hnswlib-node', async () => {
+  // Import fs lazily inside the factory so vitest's mocking machinery is happy.
+  const { writeFileSync } = await import('fs');
+  return {
+    HierarchicalNSW: class {
+      initIndex(): void {}
+      resizeIndex(): void {}
+      addPoint(): void {}
+      searchKnn(): { neighbors: number[]; distances: number[] } { return { neighbors: [], distances: [] }; }
+      // The real binding writes a binary index file. We just touch the path so
+      // VectorStore.save()'s subsequent renameSync(.tmp → real) succeeds.
+      writeIndexSync(p: string): void { writeFileSync(p, ''); }
+      readIndexSync(): void {}
+      markDelete(): void {}
+    },
+  };
+});
 
 const { GraphRetriever } = await import('../graph-retriever.js');
 const { OllamaClient } = await import('@rag-system/model-router');

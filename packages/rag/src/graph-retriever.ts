@@ -161,12 +161,11 @@ export class GraphRetriever {
   async indexCodebase(rootDir: string, opts: { indexId?: string } = {}): Promise<string> {
     const indexId = opts.indexId ?? `idx-${Date.now()}`;
     const absRoot = path.resolve(rootDir);
-    const patterns = config.codeGraph.include.map(p => path.join(absRoot, p));
     const ignore = config.codeGraph.exclude.map(e => `**/${e}/**`);
 
     const files: string[] = [];
-    for (const pattern of patterns) {
-      const found = await glob(pattern, { ignore, absolute: true });
+    for (const pattern of config.codeGraph.include) {
+      const found = await glob(pattern, { cwd: absRoot, ignore, absolute: true });
       files.push(...found);
     }
 

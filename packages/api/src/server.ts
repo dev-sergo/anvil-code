@@ -79,6 +79,26 @@ export function buildServer(deps: BuildServerDeps) {
     return reply.code(202).send({ task_id: job.id, project_id: projectId, status: 'queued' });
   });
 
+  // ── Indexing endpoint ──
+  // Trigger index_codebase on a project (defaults to default project's root).
+  // Returns the indexId so the client can subscribe to GET /task/:id/stream.
+  app.post('/index', async (request, reply) => {
+    const body = (request.body ?? {}) as { project?: string; root?: string };
+    const projectId = body.project ?? defaultProjectId;
+    const project = registry.get(projectId);
+    if (!project) {
+      return reply.code(404).send({ error: `Project '${projectId}' not registered` });
+    }
+    const ctx = await projects.get(projectId);
+    const root = body.root ?? project.root;
+    // Fire-and-forget — return the indexId immediately so the client streams progress.
+    const indexId = `idx-${Date.now()}`;
+    void ctx.retriever.indexCodebase(root, { indexId }).catch(err => {
+      logger.error({ err: String(err), projectId, root }, 'Indexing failed');
+    });
+    return reply.code(202).send({ index_id: indexId, project_id: projectId, root });
+  });
+
   // ── Project endpoints ──
   app.get('/projects', async () => ({ projects: registry.list() }));
 

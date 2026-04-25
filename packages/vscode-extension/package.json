@@ -1,0 +1,79 @@
+{
+  "name": "rag-system-vscode",
+  "displayName": "RAG System",
+  "description": "VSCode sidebar for the local RAG System: projects, live task progress, semantic indexing.",
+  "version": "0.1.0",
+  "publisher": "rag-system",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ragSystem",
+          "title": "RAG System",
+          "icon": "$(rocket)"
+        }
+      ]
+    },
+    "views": {
+      "ragSystem": [
+        { "id": "ragProjects", "name": "Projects" },
+        { "id": "ragTasks", "name": "Tasks" }
+      ]
+    },
+    "commands": [
+      { "command": "rag.refresh", "title": "RAG: Refresh", "icon": "$(refresh)" },
+      { "command": "rag.connect", "title": "RAG: Set API URL" },
+      { "command": "rag.runTask", "title": "RAG: Run Task", "icon": "$(play)" },
+      { "command": "rag.indexProject", "title": "RAG: Index Active Project", "icon": "$(database)" },
+      { "command": "rag.registerProject", "title": "RAG: Register Project", "icon": "$(add)" },
+      { "command": "rag.selectActiveProject", "title": "RAG: Select Active Project" },
+      { "command": "rag.streamTask", "title": "RAG: Stream Task Progress" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "rag.refresh", "when": "view == ragProjects", "group": "navigation" },
+        { "command": "rag.refresh", "when": "view == ragTasks", "group": "navigation" },
+        { "command": "rag.registerProject", "when": "view == ragProjects", "group": "navigation" },
+        { "command": "rag.runTask", "when": "view == ragTasks", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "rag.streamTask", "when": "view == ragTasks && viewItem == task" },
+        { "command": "rag.selectActiveProject", "when": "view == ragProjects && viewItem == project" }
+      ]
+    },
+    "configuration": {
+      "title": "RAG System",
+      "properties": {
+        "ragSystem.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "Base URL of the RAG System API server."
+        },
+        "ragSystem.refreshIntervalMs": {
+          "type": "number",
+          "default": 5000,
+          "description": "How often to poll /tasks for status updates (set 0 to disable)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "package": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@rag-system/shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.5"
+  }
+}
