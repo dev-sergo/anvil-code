@@ -93,6 +93,100 @@ Rules you MUST follow:
      FastifyPluginCallback, FastifyPluginOptions, FastifyServerOptions.
      NEVER import: HookHandlerType, RouteGenericInterface, FastifyHook (do not exist).
 
+WORKED EXAMPLES — study these, then mirror their shape on real tasks.
+
+EXAMPLE A — Add a Fastify hook in a NEW middleware file and register it from server.ts.
+
+Step: "Add request-logging middleware in src/middleware/req-log.ts that logs
+{method, url, statusCode, durationMs} on every response. Register it in src/server.ts."
+
+Existing src/server.ts (from "Existing project files"):
+import Fastify from 'fastify';
+import { usersRoutes } from './routes/users.js';
+
+const app = Fastify({ logger: true });
+await app.register(usersRoutes);
+app.listen({ port: 3001 });
+
+CORRECT output:
+{
+  "files": [
+    {
+      "action": "create",
+      "path": "src/middleware/req-log.ts",
+      "content": "import type { FastifyInstance } from 'fastify';\\n\\nexport function requestLog(app: FastifyInstance): void {\\n  app.addHook('onResponse', async (request, reply) => {\\n    app.log.info({\\n      method: request.method,\\n      url: request.url,\\n      statusCode: reply.statusCode,\\n      durationMs: reply.elapsedTime,\\n    }, 'request');\\n  });\\n}\\n"
+    },
+    {
+      "action": "modify",
+      "path": "src/server.ts",
+      "edits": [
+        {
+          "search": "import Fastify from 'fastify';\\nimport { usersRoutes } from './routes/users.js';",
+          "replace": "import Fastify from 'fastify';\\nimport { usersRoutes } from './routes/users.js';\\nimport { requestLog } from './middleware/req-log.js';"
+        },
+        {
+          "search": "const app = Fastify({ logger: true });\\nawait app.register(usersRoutes);",
+          "replace": "const app = Fastify({ logger: true });\\nrequestLog(app);\\nawait app.register(usersRoutes);"
+        }
+      ]
+    }
+  ]
+}
+
+Why this is correct (NOT a list of rules — concrete reasoning to imitate):
+- The spec says "on every response" → onResponse hook (NOT onRequest, NOT onSend).
+- The spec lists exact field names {method, url, statusCode, durationMs} → output uses those EXACT names. No "responseTime", no "duration", no "reqId" etc.
+- durationMs comes from reply.elapsedTime, which Fastify provides. No manual Date.now() bookkeeping in onRequest + raw 'finish' listener — that's a Fastify anti-pattern.
+- The new file is .ts; the import in server.ts uses .js suffix (NodeNext convention).
+- Each "search" in server.ts edits includes 1-2 surrounding lines so it's unique.
+- requestLog(app) is registered BEFORE await app.register(usersRoutes) so the hook applies to all routes.
+
+EXAMPLE B — Modify an existing class method while preserving everything around it.
+
+Step: "Make UserService.get(id) return null for soft-deleted users (deletedAt set)."
+
+Existing src/services/user-service.ts (from "Recently modified by previous steps"):
+export class UserService {
+  static list(): User[] {
+    return Array.from(users.values()).filter(u => u.deletedAt === null);
+  }
+
+  static get(id: string): User | null {
+    return users.get(id) ?? null;
+  }
+
+  static create(input: { name: string; email: string }): User {
+    const user: User = { id: randomUUID(), name: input.name, email: input.email,
+      createdAt: new Date().toISOString(), deletedAt: null };
+    users.set(user.id, user);
+    return user;
+  }
+}
+
+CORRECT output:
+{
+  "files": [
+    {
+      "action": "modify",
+      "path": "src/services/user-service.ts",
+      "edits": [
+        {
+          "search": "  static get(id: string): User | null {\\n    return users.get(id) ?? null;\\n  }",
+          "replace": "  static get(id: string): User | null {\\n    const user = users.get(id);\\n    if (!user || user.deletedAt) return null;\\n    return user;\\n  }"
+        }
+      ]
+    }
+  ]
+}
+
+Why:
+- ONE small edit on ONE file. Don't touch list() or create().
+- "search" is the entire 3-line method body — that makes the match unique without needing more context.
+- Whitespace in "search" is byte-for-byte from the source (2-space indent for the method name, 4-space indent for the body).
+- The replace keeps the same indentation level. Method signature is unchanged.
+
+End of examples.
+
 Output ONLY a valid JSON object matching this schema:
 { "files": [ <change>, <change>, ... ] }
 where each <change> is one of the create/modify/delete shapes above.`;

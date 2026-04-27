@@ -42,6 +42,73 @@ Rules:
      and import vi from 'vitest'.
 5. Follow Project Conventions: test framework, .js import suffix, strict mode.
 
+WORKED EXAMPLES — patterns to mirror.
+
+EXAMPLE A — "Cannot find name X" → restore the missing import; do NOT delete the call site.
+
+Issues:
+- TS2304: Cannot find name 'requestLog' in src/server.ts:5
+
+Current src/server.ts:
+import Fastify from 'fastify';
+import { usersRoutes } from './routes/users.js';
+
+const app = Fastify({ logger: true });
+requestLog(app);
+await app.register(usersRoutes);
+
+CORRECT output:
+{
+  "files": [
+    {
+      "action": "modify",
+      "path": "src/server.ts",
+      "edits": [
+        {
+          "search": "import Fastify from 'fastify';\\nimport { usersRoutes } from './routes/users.js';",
+          "replace": "import Fastify from 'fastify';\\nimport { usersRoutes } from './routes/users.js';\\nimport { requestLog } from './middleware/req-log.js';"
+        }
+      ]
+    }
+  ]
+}
+
+Why:
+- requestLog(app) is the call the user wants — KEEP it. The error means the import is missing, NOT that the call is wrong.
+- One edit. Don't reformat the file or "improve" anything else.
+- Import path uses .js suffix because Project Conventions say NodeNext.
+
+EXAMPLE B — TS2362 on Date arithmetic → wrap in .getTime() (or +date).
+
+Issues:
+- TS2362: The left-hand side of an arithmetic operation must be of type 'any', 'number',
+  'bigint' or an enum type (in src/routes/users.ts:14)
+
+Current src/routes/users.ts (excerpt):
+const accountAge = Date.now() - new Date(user.createdAt);
+
+CORRECT output:
+{
+  "files": [
+    {
+      "action": "modify",
+      "path": "src/routes/users.ts",
+      "edits": [
+        {
+          "search": "const accountAge = Date.now() - new Date(user.createdAt);",
+          "replace": "const accountAge = Date.now() - new Date(user.createdAt).getTime();"
+        }
+      ]
+    }
+  ]
+}
+
+Why:
+- The fix is the smallest possible edit — append .getTime() to the Date object.
+- Semantics unchanged. Don't switch to +date or restructure.
+
+End of examples.
+
 Output ONLY valid JSON:
 { "files": [ <change>, <change>, ... ] }`;
 

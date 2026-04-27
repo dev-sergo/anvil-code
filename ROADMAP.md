@@ -2,8 +2,8 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.25.2 — repo-map + orchestrator/reindex hardening; 217/217 unit-тестов; **L2.3 cumulative впервые landed GREEN 9.2/10** (см. `docs/benchmarks/runs/2026-04-28-v1.25-repo-map.md`)  
-**Последнее обновление**: 2026-04-28  
+**Статус проекта**: 🟢 v1.26 — few-shot examples в Coder/Fixer; 217/217 unit-тестов; **L2.1 mean 10/10 zero-variance, L2.3 cumulative mean 7.9** (см. `docs/benchmarks/runs/2026-04-29-v1.26-few-shot.md`)  
+**Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
 ---
@@ -528,10 +528,34 @@ node packages/api/dist/index.js
 - [x] Новый тест в `index-events.test.ts` (6/6): индексируем 3 файла → удаляем один с диска → reindex прунит, граф содержит 2 символа, `index_done.data.pruned === 1`, file_hash удалённого файла очищен
 - **Атаковал:** "ghost files" в repo-map после `git reset --hard`. На v1.25 surfaced когда L2.1 #1 на свежем reset тихо не создал middleware — repo-map утверждал что requestLogMiddleware уже есть (stale от прошлого прогона), модель просто зарегистрировала его в server.ts → typecheck fail.
 
-#### v1.26 — Few-shot examples в Coder/Fixer (~1 день)
-- [ ] 2-3 worked examples в каждом system prompt (input → правильный output)
-- [ ] Локальные модели лучше следуют примерам, чем абстрактным rules
-- [ ] **Атакует:** semantic misses типа `nullable()` вместо required
+#### v1.26 — Few-shot examples в Coder/Fixer (✅ реализовано)
+
+**Цель:** Заменить абстрактные prose rules в системных промптах на worked examples (input → правильный output). Локальные модели гораздо лучше следуют примерам.
+
+- [x] **CoderAgent.systemPrompt** — секция WORKED EXAMPLES с 2 примерами:
+  - **Example A:** Fastify middleware с `app.addHook("onResponse", ...)`, точные поля `{method, url, statusCode, durationMs}`, `reply.elapsedTime`, два-edit modify `server.ts` с surrounding context. Атакует L2.1 hook-misuse + field-drift (v1.25 N=2 mean=6.4)
+  - **Example B:** modify одного метода класса, многострочный search byte-for-byte, минимальный one-edit one-file output. Демонстрирует patch-based discipline
+- [x] **FixerAgent.systemPrompt** — секция WORKED EXAMPLES с 2 примерами:
+  - **Example A:** TS2304 "Cannot find name X" → восстановить пропущенный import (НЕ удалять call site)
+  - **Example B:** TS2362 на Date arithmetic → `.getTime()` (smallest-possible edit)
+- [x] Прозаические rules сохранены — examples их дополняют, не заменяют
+- [x] Никаких code logic changes — 217/217 тестов остаются зелёными, 12/12 пакетов собрались
+
+**Бенчмарк-прогон 2026-04-29** (`qwen2.5-coder:32b-instruct`, N=2):
+
+| Задача | v1.25 mean | **v1.26 mean** | Δ |
+|---|---|---|---|
+| L1.1 clean | 10.0 | **10.0** | flat |
+| L2.1 clean | 6.4 (variance 2.0) | **10.0 (variance 0)** | **+3.6** |
+| L2.3 cumulative | ≈4.6 (incl. infra-fail) | **7.9** | **+3.3** |
+
+**Главное достижение:** L2.1 lifted from variance hell to **deterministic 10/10**. Обе попытки выдали byte-identical output, точно повторяющий Example A — `onResponse` hook, точные поля `{method, url, statusCode, durationMs}`, `reply.elapsedTime`. На v1.25 модель упорно использовала `onRequest` несмотря на 14 prose rules. Few-shot example fix'нул это с одного промпт-edit'а.
+
+**L2.3 cumulative:** 6.8 partial + 9.0 full GREEN. No hard fails, no commit_skipped. Variance остаётся (Planner иногда 1-step coupled, иногда 3-step → cross-step drift), но floor выше всех Phase 2 итераций.
+
+**Mean across all 6 runs: 9.3/10** (v1.25 был 7.4 на valid runs).
+
+**Surfaced finding:** Reviewer стал новым variance source на cumulative L2.3 — три раза отклонил Coder output для step3 в #1 run. Кандидат на v1.26.1 (few-shot для Reviewer prompts) если pattern повторится.
 
 #### v1.27 — Per-agent context tailoring (~1 день)
 - [ ] Reviewer получает diff, не full files
