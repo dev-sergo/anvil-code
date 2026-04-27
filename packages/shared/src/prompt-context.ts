@@ -14,6 +14,14 @@ export interface PromptContextInput {
    * latest content lives only here.
    */
   newlySources?: Array<{ path: string; content: string }>;
+  /**
+   * Compact "repo-map" of the whole project — file tree plus key signatures
+   * from the AST (built via @rag-system/code-graph buildRepoMap). When set,
+   * this is the second section of the prompt, right after Project Conventions.
+   * Its purpose is to give the model an authoritative inventory of what exists,
+   * so it doesn't hallucinate methods/files. Empty string is treated as absent.
+   */
+  repoMap?: string;
 }
 
 const MAX_BYTES_PER_FILE = 8 * 1024;
@@ -35,6 +43,18 @@ export function buildPromptContext(input: PromptContextInput): string {
   const sections: string[] = [];
 
   sections.push(`# Project Conventions\n${input.conventions.summary}`);
+
+  if (input.repoMap && input.repoMap.trim()) {
+    sections.push(
+      `# Repo Map (high-level structure of THIS project)\n` +
+      `Authoritative inventory of files and exported symbols available to reference. ` +
+      `Do NOT invent methods, classes, or files that are not listed here. ` +
+      `If you need behavior that isn't present, modify an existing file or create a new one — ` +
+      `but every symbol you reference must either appear below, be a standard-library/framework name, ` +
+      `or be one you are creating in this same step.\n\n` +
+      input.repoMap
+    );
+  }
 
   if (input.newlySources && input.newlySources.length > 0) {
     const block = input.newlySources

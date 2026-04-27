@@ -54,6 +54,15 @@ export class GraphRetriever {
     return vector;
   }
 
+  /**
+   * Live reference to the in-memory CodeGraph. Exposed so callers can build a
+   * repo-map (or any other graph-derived view) without a separate snapshot or
+   * disk re-read. Treat as read-only — the retriever owns mutations.
+   */
+  get graph(): CodeGraph {
+    return this.codeGraph;
+  }
+
   async retrieveContext(query: string): Promise<string> {
     const items = await this.retrieveContextItems(query, 5);
     if (items.length === 0) return '';

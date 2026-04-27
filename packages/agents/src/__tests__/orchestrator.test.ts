@@ -48,6 +48,9 @@ function buildOrchestrator(opts: {
   const retriever = {
     retrieveContext: vi.fn().mockResolvedValue(''),
     retrieveContextItems: vi.fn().mockResolvedValue([]),
+    // buildRepoMap walks graph.getAll(); empty graph yields an empty repo-map
+    // string, which is exactly what these scheduling-focused tests need.
+    graph: { getAll: () => [] },
   };
   const writer = { execute: vi.fn(), root: '/tmp' };
   const git = {

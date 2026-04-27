@@ -5,6 +5,7 @@ import { GraphRetriever } from '@rag-system/rag';
 import { SafeWriter, TestRunner, TypeChecker, applyEdits } from '@rag-system/safe-exec';
 import { MemoryStore } from '@rag-system/memory';
 import { GitEngine } from '@rag-system/git-engine';
+import { buildRepoMap } from '@rag-system/code-graph';
 import { PlannerAgent } from './planner.js';
 import { CoderAgent } from './coder.js';
 import { ArchitectAgent } from './architect.js';
@@ -60,6 +61,18 @@ export class Orchestrator {
     return this.conventions;
   }
 
+  /**
+   * Render a compact repo-map for use in agent prompts. Built fresh on every
+   * call (cheap — just a render of the in-memory CodeGraph snapshot). Entry
+   * points are always pinned at the top; callers can pass `extraHighlights`
+   * (e.g. paths just modified by previous steps) to keep them visible too.
+   */
+  private renderRepoMap(extraHighlights: string[] = []): string {
+    const conventions = this.getConventions();
+    const highlights = Array.from(new Set([...conventions.entryPoints, ...extraHighlights]));
+    return buildRepoMap(this.retriever.graph, this.writer.root, { highlightFiles: highlights });
+  }
+
   async runTask(taskId: string, description: string, mode: 'fast'|'balanced'|'deep' = 'balanced') {
     const log = taskLogger(taskId);
     log.info({ mode }, 'Orchestrator started task');
@@ -76,11 +89,13 @@ export class Orchestrator {
     const ragSnippets = items
       .map(i => `// ${i.filePath}:${i.startLine}\n${i.text}`)
       .join('\n\n---\n\n');
+    const repoMap = this.renderRepoMap();
     const plannerContext = buildPromptContext({
       conventions,
       ragSnippets,
       ragFilePaths: [],
       projectRoot: this.writer.root,
+      repoMap,
     });
 
     // 3. Plan
@@ -378,9 +393,14 @@ export class Orchestrator {
     // earlier step modified, even though nothing has been written to disk yet.
     const newlySources = resolveVirtualSources(previousChanges, this.writer.root);
 
+    // Repo-map: pin entry points + any files this step's "previous siblings"
+    // already touched, so the model never loses sight of files mid-step. Built
+    // once per step from the live graph snapshot.
+    const repoMap = this.renderRepoMap(newlySources.map(s => s.path));
+
     const design = await this.architect.execute(
       step.description,
-      buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources }),
+      buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources, repoMap }),
       mode,
     );
 
@@ -391,6 +411,7 @@ export class Orchestrator {
       projectRoot: this.writer.root,
       designContext: design.design,
       newlySources,
+      repoMap,
     });
     // Leaner variant for Reviewer/Tester that already see files inline in their own prompt.
     const reviewContext = buildPromptContext({
@@ -399,6 +420,7 @@ export class Orchestrator {
       ragFilePaths: [],
       projectRoot: this.writer.root,
       newlySources,
+      repoMap,
     });
     const onCoderFile = (file: PartialFile, index: number) => {
       taskEvents.emitEvent({
@@ -532,6 +554,7 @@ export class Orchestrator {
       ragSnippets: '',
       ragFilePaths: failedChanges.map(c => c.path),
       projectRoot: this.writer.root,
+      repoMap: this.renderRepoMap(failedChanges.map(c => c.path)),
     });
 
     log.info(
@@ -612,6 +635,7 @@ export class Orchestrator {
         ragSnippets: '',
         ragFilePaths: allFileChanges.map(c => c.path),
         projectRoot: this.writer.root,
+        repoMap: this.renderRepoMap(allFileChanges.map(c => c.path)),
       });
       const fixResult = await this.fixer.execute(issues, allFileChanges, validationContext, mode);
 

@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.24 — whitespace-tolerant edit fallback в applyEdits; 205/205 unit-тестов; первый Phase 2 шаг (см. `docs/benchmarks/runs/2026-04-28-v1.24-whitespace-tolerant.md`)  
+**Статус проекта**: 🟢 v1.25 — repo-map в каждом промпте; 215/215 unit-тестов; **L2.3 cumulative впервые landed GREEN 9.2/10** (см. `docs/benchmarks/runs/2026-04-28-v1.25-repo-map.md`)  
 **Последнее обновление**: 2026-04-28  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -487,11 +487,45 @@ node packages/api/dist/index.js
 
 **Вывод:** v1.24 — insurance policy. Имплементирована корректно, юнит-тестами покрыта, не регрессирует strict path. На live-моделях этот failure mode не пробил, но цена нулевая. **Главный actionable** — silent partial completion на L2.3 повторно подтверждена → v1.28 повышается в приоритете.
 
-#### v1.25 — Repo-map в каждом промпте (~1-2 дня)
-- [ ] `RepoMapper` модуль: компактное представление структуры (`tree -L 3` + key signatures от AST)
-- [ ] Включается в `buildPromptContext` перед "Existing project files"
-- [ ] Token budget — лимит размера, чтобы не раздувать prompt
-- [ ] **Атакует:** галлюцинации "несуществующих методов / файлов", главная гипотеза для cumulative regression
+#### v1.25 — Repo-map в каждом промпте (✅ реализовано)
+
+**Цель:** Дать модели authoritative inventory «что существует» — компактный список файлов с сигнатурами символов из AST. Главная гипотеза для пробития cumulative ceiling.
+
+- [x] Новый модуль [packages/code-graph/src/repo-map.ts](packages/code-graph/src/repo-map.ts) — `buildRepoMap(graph, projectRoot, opts?)`: per-file relative path + indented signatures (class methods через regex по `text` без AST re-walk; interface fields; function/type/variable headers); token budget (default 6000 chars ≈ 1500 tokens) с greedy fill; `highlightFiles` (entry points + paths из `previousChanges`) — pinned at top, никогда не truncated; control-flow keywords (if/for/while/...) фильтруются из method extraction
+- [x] `PromptContextInput.repoMap?: string` — новое опциональное поле, рендерится как **второй** блок промпта между Project Conventions и Recently-modified/Existing-files
+- [x] `GraphRetriever.graph` getter — exposes live CodeGraph для рендереров без отдельного snapshot
+- [x] `Orchestrator.renderRepoMap(extraHighlights)` — helper, вызывается на каждом buildPromptContext (Planner / Architect / Coder / Reviewer / retry-Fixer / validation-Fixer); строится cheap из in-memory графа; для cross-step видимости передаются paths из `previousChanges`
+- [x] 10 новых unit-тестов в `repo-map.test.ts` (10/10 зелёные): empty graph → '', function/class/interface/variable rendering, budget enforcement с footer truncation, highlightFiles ordering, alphabetic sort, signature truncation 120 chars, control-flow filter, regex-metachar handling
+- [x] Mock в `orchestrator.test.ts`: `retriever.graph = { getAll: () => [] }` — пустой граф рендерится в '' и не ломает scheduling-tests
+- [x] 215/215 общая зелёная, 12/12 пакетов собрались
+
+**Бенчмарк-прогон 2026-04-28** (`qwen2.5-coder:32b-instruct`):
+
+| Задача | v1.24 baseline | v1.25 result | Δ |
+|---|---|---|---|
+| L1.1 clean | 10/10 ✓ | 10/10 ✓ × 2 (reproducible) | flat |
+| L2.1 clean | 5.2/10 commit_skipped | **7.4/10 ✓ + 5.4/10 ✓** (mean 6.4) | +1.2, оба коммитят |
+| **L2.3 cumulative** | 5.0/10 partial commit | **9.2/10 ✓ GREEN + failed + 4.6/10 skipped** | +4.2 best-of |
+
+**Главное достижение:** L2.3 cumulative впервые в истории проекта landed **GREEN commit 9.2/10**, с целостной семантикой 3 файлов (types + service + routes). Модель добавила бонусом `UserService.delete()` метод — senior-engineer touch. Прежний потолок был 5.0/10 partial commit с silent missing file. **Repo-map работает на target failure mode.**
+
+**Variance высокая на L2.3:** 1/3 GREEN. Главный источник — Planner output: 1-step coupled → success, 2-step → cross-step drift даже с repo-map. v1.27 (per-agent context tailoring) должна стабилизировать.
+
+**На L2.1 модель упорно использует `onRequest` вместо `onResponse`** в обоих ранах. Repo-map не лечит — Fastify hook signatures не индексированы в sandbox source. Это target для v1.26 (few-shot examples).
+
+**Tolerant fallback (v1.24) всё ещё ни разу не сработал** за два прогона. Permanent insurance, не двигает скоры.
+
+**Surfaced two pre-existing orchestrator bugs** (не v1.25 регрессии — добавлены как v1.25.1/v1.25.2 ниже).
+
+#### v1.25.1 — Validation-Fixer write throws не должны крашить task (~30 минут)
+- [ ] Wrap `this.writer.execute(fixed)` в [orchestrator.ts:622](packages/agents/src/orchestrator.ts#L622) в try/catch — на throw логировать как validation issue и продолжать loop, не крашить task
+- [ ] Тест: validation Fixer возвращает edit с unmatched search → task завершается с `commit_skipped`, не `status: failed`
+- [ ] **Атакует:** uncaught throw из L2.3 #2 на v1.25 — валидаторский Fixer fail обрушил всю задачу. В v1.24 не проявилось случайно (Fixer's edits тогда матчили).
+
+#### v1.25.2 — Reindex должен пруниться по deleted files (~1 час)
+- [ ] `indexCodebase` после glob diff'ает discovered set против `file_hashes` table — для отсутствующих on-disk файлов вызывает `graph.removeFile()` + удаляет из vectorStore
+- [ ] Тест: после `git reset` файла, который был в графе → reindex прунит его символы
+- [ ] **Атакует:** "ghost files" в repo-map после `git reset --hard`. Surfaced когда L2.1 #1 на v1.25 silently не создал middleware потому что repo-map утверждал что он уже есть (от прошлого прогона).
 
 #### v1.26 — Few-shot examples в Coder/Fixer (~1 день)
 - [ ] 2-3 worked examples в каждом system prompt (input → правильный output)
