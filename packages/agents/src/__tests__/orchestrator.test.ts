@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { taskEvents } from '@rag-system/shared';
+import type { TaskEvent } from '@rag-system/shared';
 
 vi.mock('@rag-system/shared', async () => {
   const actual = await vi.importActual<typeof import('@rag-system/shared')>('@rag-system/shared');
@@ -214,6 +216,72 @@ describe('Orchestrator per-step recovery', () => {
     expect(store.saveTask).toHaveBeenCalledWith(expect.objectContaining({
       result: expect.stringContaining('Completed 1/2 steps'),
     }));
+  });
+
+  // v1.28 — partial completion must emit a `commit_partial` event and set
+  // `done.data.partial = true` with the failed step ids surfaced. Otherwise
+  // tasks where a step quietly didn't land report `done` with no signal —
+  // exactly the L2.3 #1 v1.26 benchmark scenario where step3's DELETE
+  // endpoint never made it but the operator saw only a regular `done`.
+  it('emits commit_partial and partial:true on done when a step fails', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [
+        { id: 'a', description: 'a', dependencies: [] },
+        { id: 'b', description: 'b', dependencies: [] },
+      ],
+      failingStepIds: new Set(['b']),
+    });
+
+    const taskId = 'task-partial-1';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      await orch.runTask(taskId, 'partial work');
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    const partialEvent = captured.find(e => e.type === 'commit_partial');
+    expect(partialEvent).toBeDefined();
+    const partialData = partialEvent!.data as { failedStepIds: string[]; unrecoveredWrites: string[]; completedSteps: number; totalSteps: number };
+    expect(partialData.failedStepIds).toEqual(['b']);
+    expect(partialData.completedSteps).toBe(1);
+    expect(partialData.totalSteps).toBe(2);
+
+    const doneEvent = captured.find(e => e.type === 'done');
+    expect(doneEvent).toBeDefined();
+    const doneData = doneEvent!.data as { partial: boolean; failedStepIds: string[]; unrecoveredWrites: string[] };
+    expect(doneData.partial).toBe(true);
+    expect(doneData.failedStepIds).toEqual(['b']);
+    expect(doneData.unrecoveredWrites).toEqual([]);
+
+    // commit_partial must come before done so SSE consumers can react in order
+    expect(captured.indexOf(partialEvent!)).toBeLessThan(captured.indexOf(doneEvent!));
+  });
+
+  it('does NOT emit commit_partial on a fully-successful task', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'a', dependencies: [] }],
+    });
+
+    const taskId = 'task-clean-1';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      await orch.runTask(taskId, 'clean work');
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    expect(captured.find(e => e.type === 'commit_partial')).toBeUndefined();
+    const doneEvent = captured.find(e => e.type === 'done');
+    expect(doneEvent).toBeDefined();
+    const doneData = doneEvent!.data as { partial: boolean; failedStepIds: string[]; unrecoveredWrites: string[] };
+    expect(doneData.partial).toBe(false);
+    expect(doneData.failedStepIds).toEqual([]);
+    expect(doneData.unrecoveredWrites).toEqual([]);
   });
 
   // v1.25.1 — validation-loop Fixer's writer.execute throws (typically a

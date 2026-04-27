@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.26 — few-shot examples в Coder/Fixer; 217/217 unit-тестов; **L2.1 mean 10/10 zero-variance, L2.3 cumulative mean 7.9** (см. `docs/benchmarks/runs/2026-04-29-v1.26-few-shot.md`)  
+**Статус проекта**: 🟢 v1.28 — silent partial completion events; 219/219 unit-тестов; partial state теперь surfaced через `commit_partial` SSE event и поля `partial`/`failedStepIds`/`unrecoveredWrites` в `done.data`  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -564,10 +564,21 @@ node packages/api/dist/index.js
 - [ ] Coder/Fixer/Tester — как сейчас (full context)
 - [ ] **Атакует:** прожорливость промптов, ускоряет каждый шаг на 30-50%
 
-#### v1.28 — Silent failure events (~3 часа)
-- [ ] `commit_partial` SSE event при retry-with-feedback fail хотя бы для одного файла
-- [ ] Расширить `done` event с полем `incomplete_files: string[]`
-- [ ] **Атакует:** UX issue из L2.2 — пользователь не знает что задача половинчатая
+#### v1.28 — Silent partial completion events (✅ реализовано)
+
+**Цель:** Раньше partial state landed silently — пользователь видел только `done` event и не знал, что часть task'а не пришла. На L2.3 #1 v1.26 step3 (DELETE endpoint) failed после 3 Reviewer rounds, файл routes/users.ts остался без изменений, остальные 2 файла закоммичены — task report'ил `done` без сигнала о partial state.
+
+- [x] Новый event type `'commit_partial'` в [TaskEventType](packages/shared/src/task-events.ts) — между `commit_skipped` и `done` чтобы SSE-клиенты успели отреагировать в строгом порядке
+- [x] Orchestrator после initial+retry write phase отслеживает `unrecoveredWrites: string[]` — paths, которые failed в обеих фазах (включая случай когда retry-with-feedback не смог даже сгенерить кандидат-edit, например для отсутствующих файлов)
+- [x] Эмит `commit_partial` event строго ПЕРЕД `done` если есть failed steps ИЛИ unrecovered writes; payload: `{ failedStepIds, unrecoveredWrites, completedSteps, totalSteps }`; message содержит human-readable reasons
+- [x] `done.data` расширен полями `partial: boolean`, `failedStepIds: string[]`, `unrecoveredWrites: string[]` — на full success они empty/false, на partial — заполнены
+- [x] Финальный logger.info теперь содержит `unrecovered: N`
+- [x] 2 новых теста в `orchestrator.test.ts` (10/10): partial flow эмитит `commit_partial` перед `done` с правильным payload и порядком; clean flow НЕ эмитит `commit_partial` и `done.data.partial === false`
+- [x] 219/219 общая зелёная, 12/12 пакетов собрались
+
+**Атаковал:** silent partial completion из L2.3 cumulative #1 v1.26 — теперь UX чётко сигнализирует о неполном выполнении. SSE клиенты (VSCode extension, Cline, Roo) могут показать warning badge и показать список fail'ed steps + unrecovered files.
+
+**Никаких изменений в behavior pipeline'a** — это чистый observability win, не влияет на бенчмарк scores. Отдельный benchmark не требовался.
 
 ### Phase 3 — Architecture (📋 после Phase 2)
 

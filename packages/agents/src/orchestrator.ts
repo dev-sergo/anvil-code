@@ -162,10 +162,19 @@ export class Orchestrator {
     // the model), give Fixer one shot with the REAL current file content.
     // This is the iterative-editing pattern from Aider — model self-corrects
     // when shown the actual text it should be quoting.
+    //
+    // Anything that's still failing after the retry is recorded as an
+    // "unrecovered write": the model wanted to change this file, neither the
+    // initial nor the retry attempt succeeded, and the file is left as it was.
+    // Surfaced via the `commit_partial` event below so the operator gets an
+    // explicit signal that the change set is incomplete.
+    const unrecoveredWrites: string[] = [];
     if (failedWrites.length > 0) {
       const retried = await this.retryFailedEdits(failedWrites, mode, log);
       const dedupedRetry = dedupeChangesByPath(retried);
+      const retriedPaths = new Set<string>();
       for (const r of dedupedRetry) {
+        retriedPaths.add(r.path);
         try {
           this.writer.execute(r);
           writtenFiles.push(r.path);
@@ -173,6 +182,15 @@ export class Orchestrator {
         } catch (err: unknown) {
           const e = err instanceof Error ? err : new Error(String(err));
           log.warn({ path: r.path, error: e.message }, 'Retry also failed; file remains unchanged');
+          unrecoveredWrites.push(r.path);
+        }
+      }
+      // Files whose initial write failed AND for which retry didn't even
+      // produce a candidate change (e.g. retryFailedEdits skipped them
+      // because the file didn't exist on disk yet) are also unrecovered.
+      for (const f of failedWrites) {
+        if (!retriedPaths.has(f.change.path) && !writtenFiles.includes(f.change.path)) {
+          unrecoveredWrites.push(f.change.path);
         }
       }
     }
@@ -203,6 +221,31 @@ export class Orchestrator {
       });
     }
 
+    // 7a. Partial-completion signal. The task is marked `done` either way (so
+    // the SSE stream closes and the API returns 200), but a `commit_partial`
+    // event right before `done` tells the operator explicitly: "some steps or
+    // file writes did not land". Without this, partial state landed silently —
+    // see L2.3 cumulative #1 in the v1.26 benchmark, where step3's DELETE
+    // endpoint never made it but the user saw only a regular `done`.
+    const failedStepIds = [...failedSteps];
+    const partial = failedStepIds.length > 0 || unrecoveredWrites.length > 0;
+    if (partial) {
+      const reasons: string[] = [];
+      if (failedStepIds.length > 0) reasons.push(`${failedStepIds.length} step(s) failed`);
+      if (unrecoveredWrites.length > 0) reasons.push(`${unrecoveredWrites.length} file write(s) unrecovered`);
+      taskEvents.emitEvent({
+        taskId,
+        type: 'commit_partial',
+        message: `Partial completion: ${reasons.join('; ')}`,
+        data: {
+          failedStepIds,
+          unrecoveredWrites,
+          completedSteps: completedSteps.size,
+          totalSteps: plan.steps.length,
+        },
+      });
+    }
+
     // 8. Store memory
     const result = failedSteps.size > 0
       ? `Completed ${completedSteps.size}/${plan.steps.length} steps. Failed: ${[...failedSteps].join(', ')}`
@@ -215,12 +258,21 @@ export class Orchestrator {
       completedAt: new Date().toISOString(),
     });
 
-    log.info({ completed: completedSteps.size, failed: failedSteps.size }, 'Task completed');
+    log.info(
+      { completed: completedSteps.size, failed: failedSteps.size, unrecovered: unrecoveredWrites.length },
+      'Task completed',
+    );
     taskEvents.emitEvent({
       taskId,
       type: 'done',
       message: result ?? 'Task completed successfully',
-      data: { completed: completedSteps.size, failed: failedSteps.size },
+      data: {
+        completed: completedSteps.size,
+        failed: failedSteps.size,
+        partial,
+        failedStepIds,
+        unrecoveredWrites,
+      },
     });
   }
 
