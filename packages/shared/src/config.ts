@@ -59,6 +59,11 @@ export const config = {
     parallelism: Math.max(1, envInt('AGENTS_PARALLELISM', 3)),
     testerEnabled: envBool('TESTER_ENABLED', true),
     plannerMaxSteps: Math.max(1, envInt('PLANNER_MAX_STEPS', 50)),
+    // v1.30 — when true, the Orchestrator uses the tool-calling Coder
+    // (read_file/replace_in_file/create_file/delete_file/done) instead of
+    // the patch-based Coder (search/replace JSON). Off by default to keep
+    // existing behavior; flip on per-task or per-deployment to validate.
+    toolCallingCoder: envBool('TOOL_CALLING_CODER', false),
   },
   safeExec: {
     dryRun: envBool('SAFE_EXEC_DRY_RUN', false),

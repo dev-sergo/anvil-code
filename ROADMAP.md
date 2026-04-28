@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟡 v1.29.1 — repo-map at scale (16KB budget + production/tests split + section headers); 223/223 unit-тестов; v1.30 tool-calling Coder следующий шаг (фундаментальный фикс scale ceiling)  
+**Статус проекта**: 🟢 v1.30 — tool-calling Coder; 254/254 unit-тестов; **v1.29 ceiling сломан** — atomic edits на 91-файловом проекте landящ корректно (server.ts /version perfect surgical diff vs v1.29 0/10). Новый failure mode: scope creep. Default `TOOL_CALLING_CODER=true`, hardening в v1.30.1.  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -648,22 +648,49 @@ Hypothesis: Architect/Reviewer/Tester не нуждаются в full source —
 
 **Future hardening:** при переходе на large projects (500+ файлов) — увеличивать budget динамически или вводить hierarchical view (package → file → symbols). Не блокирует v1.30, можно сделать вместе с tool-calling.
 
-#### v1.30 — Tool-calling Coder (🔴 урgent после v1.29 findings, ~3-5 дней)
+#### v1.30 — Tool-calling Coder (✅ реализовано — Coder; Fixer пока patch-based)
 
-**Корневая проблема:** model writing `{search, replace}` blocks requires byte-perfect search matches. Это работало на 5-файловом sandbox'е, **физически ломается на 91-файловом проекте** — model can't reproduce the file's exact bytes when the prompt is long. Все 5 LLM-вызовов в pipeline'е (Coder + retry + 3 × validation Fixer) независимо галлюцинируют search.
+**Цель:** Заменить patch-based Coder (JSON `{search, replace}` блоки) на tool-calling loop. v1.29 показала, что byte-perfect quoting ломается на 91-файловом проекте. Решение: модель навигирует через tools с координатами, не quote'ы.
 
-**Решение:** Coder вызывает tools, не пишет JSON output:
-- `read_file(path, lines?)` — читает кусок файла; модель работает с реальными байтами с диска
-- `replace_in_file(path, line_range, new_text)` — редактирует по координатам, не по quote
-- `run_test(file?)` — прогоняет тесты на месте
-- `list_dir(path)` — для exploration
+- [x] [packages/model-router/src/types.ts](packages/model-router/src/types.ts) — `ToolDefinition`, `ToolCall`, `ToolCallResponse`, `ToolLoopMessage` (OpenAI-compatible)
+- [x] [packages/model-router/src/ollama-client.ts](packages/model-router/src/ollama-client.ts) — `chatWithTools()` non-streaming + **inline-content fallback parser** (`extractInlineToolCalls`) для qwen2.5-coder/gemma2 quirk: они эмитят tool calls в `content` как concatenated JSON, не в structured `tool_calls`. String-aware brace-matched scanner. Без этого fix v1.30 не работает на Ollama
+- [x] [packages/agents/src/working-set.ts](packages/agents/src/working-set.ts) — in-memory file state с lazy disk read; `replace(path, startLine, endLine, newText)` 1-indexed; `toFileChanges()` дёт FileChange[] для существующего write/validation pipeline
+- [x] [packages/agents/src/tool-calling-coder.ts](packages/agents/src/tool-calling-coder.ts) — 5 tools (`read_file`/`replace_in_file`/`create_file`/`delete_file`/`done`), dispatcher, loop с MAX_TOOL_CALLS=50; emit `coder_file_ready` events для SSE-клиентов
+- [x] `config.agents.toolCallingCoder` flag (`TOOL_CALLING_CODER` env) — Orchestrator выбирает Coder runtime; default false (preserves baseline; flip on per-task для validation)
+- [x] 31 новый unit-test (14 WorkingSet + 11 dispatcher + 6 chat-with-tools); общая 254/254 зелёная
 
-Никаких search-блоков → никаких search-not-found ошибок. Архитектурно eliminates the dominant failure mode на scale.
+**Бенчмарк-прогон 2026-04-29 (`qwen2.5-coder:32b-instruct`, `TOOL_CALLING_CODER=true`):**
 
-- [ ] Migrate Coder/Fixer от JSON output на tool-calling protocol (Ollama supports it через `tools` field в /api/chat)
-- [ ] Update Orchestrator: streaming tool calls вместо batched JSON parsing
-- [ ] Maintain backward-compat: keep prompt-based Coder под env flag для fallback
-- [ ] Re-run v1.29 scale benchmark после v1.30 — если atomic tasks landed на rag-system → architecture validated
+| Задача | v1.29 patch-based | **v1.30 tool-calling** | Δ |
+|---|---|---|---|
+| Sandbox L2.1 (5 файлов) | 10/10 (deterministic) | 8.2/10 GREEN | -1.8 (стиль hit) |
+| rag-system /version (91 файлов) | **0/10** (5 search-not-found cascades) | **5.2/10** (server.ts surgical diff GREEN, package.json clobbered → commit_skipped) | **+5.2 на core failure mode** |
+| rag-system getSize (91 файлов) | ~4/10 commit_skipped | 4.8/10 commit_skipped (logic correct, placement off — outside class) | flat (другая failure) |
+
+**Главное достижение:** **v1.29 scale ceiling сломан**. server.ts получил `app.get('/version', ...)` с byte-perfect surgical edit прямо после `/health` — то, что patch-based Coder не мог сделать ни одной из 5 LLM-попыток. На sandbox L2.1 tool-calling Coder тоже работает (8.2/10 GREEN, byte-not-quite-identical to v1.26 reference, but functional).
+
+**Новые failure modes (v1.30.1 targets):**
+1. **Scope creep в unrelated files.** `/version` task → wiped `package.json`, создал `vitest-setup.ts`. `getSize` task → создал `__tests__/` директорию. Patch-based Coder был bounded требованием byte-quote'ить файл; tool-calling этого ограничения не имеет — system prompt должен быть строже
+2. **Structural placement errors.** getSize() оказался ВНЕ класса — модель не точно понимала где class boundary в queue.ts. Lines fidelity без structural understanding
+3. **Reviewer approves "no changes".** Sandbox first run — Coder выдал 0 файлов, Reviewer одобрил. Reviewer должен флагать empty output как failure
+
+**Default behavior:** `TOOL_CALLING_CODER=true` opt-in только. v1.30.1 закрывает scope discipline ДО switch'а default'a. Sandbox-scale users остаются на patch-based deterministic 10/10 пути.
+
+**Подробный run-файл:** [docs/benchmarks/runs/2026-04-29-v1.30-tool-calling-coder.md](docs/benchmarks/runs/2026-04-29-v1.30-tool-calling-coder.md)
+
+#### v1.30.1 — Scope discipline в tool-calling Coder (🔴 next, ~3-4 часа)
+- [ ] System prompt: explicit "files you may touch" list, derived from paths mentioned в task description. Refuse `create_file`/`replace_in_file` для unrelated paths
+- [ ] Hardcoded forbidden_paths: `package.json`, `package-lock.json`, `tsconfig.json`, vitest configs — модель должна explicitly request разрешения
+- [ ] Re-run /version + getSize после fix — expect both to commit cleanly
+- [ ] **Атакует:** scope creep наблюдённый в v1.30 (package.json wipe, untracked vitest-setup.ts)
+
+#### v1.30.2 — Reviewer rejects empty Coder output (~1 час)
+- [ ] Если codeChanges.files.length === 0 — Reviewer возвращает `isApproved: false` с issue "Coder produced no file changes for the requested step"
+- [ ] **Атакует:** v1.30 sandbox first run где Coder произвёл 0 файлов и Reviewer одобрил
+
+#### v1.30.3 (опционально) — Verify-syntax tool в tool-calling Coder (~2-3 часа)
+- [ ] После `replace_in_file`, WorkingSet делает brace-balance check файла; если unbalanced → return warning в tool result, модель retry'ит
+- [ ] **Атакует:** structural placement error в getSize (метод вне класса)
 
 #### v1.31+ — Sub-agents (после v1.30)
 - `BugFixAgent`, `RefactorAgent`, `FeatureAgent`, `MigrationAgent` — специализированные роли

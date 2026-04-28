@@ -3,6 +3,8 @@ export { PlannerAgent } from './planner.js';
 export type { PlanOutput, PlanStep } from './planner.js';
 export { CoderAgent } from './coder.js';
 export type { CoderOutput } from './coder.js';
+export { ToolCallingCoderAgent, dispatchToolCall, TOOL_DEFINITIONS } from './tool-calling-coder.js';
+export { WorkingSet } from './working-set.js';
 export { ArchitectAgent } from './architect.js';
 export type { ArchitectOutput } from './architect.js';
 export { TesterAgent } from './tester.js';

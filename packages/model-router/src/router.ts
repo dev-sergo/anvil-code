@@ -1,7 +1,14 @@
 import { config } from '@rag-system/shared';
 import type { ModelRole } from '@rag-system/shared';
 import { OllamaClient } from './ollama-client.js';
-import type { RouteRequest, RouteResponse } from './types.js';
+import type {
+  RouteRequest,
+  RouteResponse,
+  ToolCallResponse,
+  ToolDefinition,
+  ToolLoopMessage,
+  GenerateOptions,
+} from './types.js';
 
 const ROLE_SIZE: Record<ModelRole, 'small' | 'large'> = {
   planner: 'small',
@@ -44,5 +51,21 @@ export class ModelRouter {
     for await (const chunk of this.client.chatStream(request.messages, model, request.options ?? {})) {
       yield { chunk, model, role: request.role };
     }
+  }
+
+  /**
+   * One round of tool-calling chat. Caller drives the loop (executes tools,
+   * appends results, calls again). Selects the model the same way as
+   * `route()` so tool-calling agents inherit role-based sizing automatically.
+   */
+  async routeWithTools(
+    role: ModelRole,
+    messages: ToolLoopMessage[],
+    tools: ToolDefinition[],
+    taskMode?: 'fast' | 'balanced' | 'deep',
+    options: GenerateOptions = {},
+  ): Promise<ToolCallResponse> {
+    const model = this.selectModel(role, taskMode);
+    return this.client.chatWithTools(messages, tools, model, options);
   }
 }

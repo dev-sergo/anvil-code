@@ -8,6 +8,7 @@ import { GitEngine } from '@rag-system/git-engine';
 import { buildRepoMap } from '@rag-system/code-graph';
 import { PlannerAgent } from './planner.js';
 import { CoderAgent } from './coder.js';
+import { ToolCallingCoderAgent } from './tool-calling-coder.js';
 import { ArchitectAgent } from './architect.js';
 import { TesterAgent } from './tester.js';
 import { ReviewerAgent } from './reviewer.js';
@@ -28,6 +29,7 @@ export class Orchestrator {
   private planner: PlannerAgent;
   private architect: ArchitectAgent;
   private coder: CoderAgent;
+  private toolCallingCoder: ToolCallingCoderAgent;
   private tester: TesterAgent;
   private reviewer: ReviewerAgent;
   private fixer: FixerAgent;
@@ -45,6 +47,7 @@ export class Orchestrator {
     this.planner = new PlannerAgent(router);
     this.architect = new ArchitectAgent(router);
     this.coder = new CoderAgent(router);
+    this.toolCallingCoder = new ToolCallingCoderAgent(router);
     this.tester = new TesterAgent(router);
     this.reviewer = new ReviewerAgent(router);
     this.fixer = new FixerAgent(router);
@@ -488,7 +491,14 @@ export class Orchestrator {
         },
       });
     };
-    const codeChanges = await this.coder.execute(step.description, promptContext, mode, onCoderFile);
+    // v1.30 — Coder selection. When TOOL_CALLING_CODER=true, the model drives
+    // changes via tool calls (read_file/replace_in_file/...) against a
+    // WorkingSet. When false (default), the patch-based Coder runs the existing
+    // streaming JSON path. Same return shape (CoderOutput) — downstream pipeline
+    // (Reviewer, write phase, validation) is unchanged.
+    const codeChanges = config.agents.toolCallingCoder
+      ? await this.toolCallingCoder.execute(step.description, promptContext, mode, this.writer.root, onCoderFile)
+      : await this.coder.execute(step.description, promptContext, mode, onCoderFile);
 
     let currentChanges: FileChange[] = [...codeChanges.files];
     if (config.agents.testerEnabled) {
