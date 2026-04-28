@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.30.3.1 — Fixer history pruning + smaller call budget; 280/280 unit-тестов. **Первый раз** Fixer attempt завершился без Ollama crash на 91-файловом проекте (2 мин). Дальнейший unblock — v1.30.4 (Coder cargo-cult prompt fix) для устранения корневой причины долгих Fixer rounds.  
+**Статус проекта**: 🟢 v1.30.4 — Coder cargo-cult prompt fix; 280/280 unit-тестов. **Впервые** Coder выдал точно по spec content `return { version: '1.0.0' }` на rag-system-target. Vsплыл следующий layer — structural placement (closing brace eaten by replace_in_file). v1.30.5 verify-syntax tool — следующий unblock.  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -767,16 +767,40 @@ Hypothesis: Architect/Reviewer/Tester не нуждаются в full source —
 
 **Detailed run-file:** [docs/benchmarks/runs/2026-04-29-v1.30.3.1-fixer-history-pruning.md](docs/benchmarks/runs/2026-04-29-v1.30.3.1-fixer-history-pruning.md)
 
-#### v1.30.4 — Coder prompt fix for cargo-culting (~30 мин)
+#### v1.30.4 — Coder prompt fix for cargo-culting (✅ реализовано)
 
-**Атакует:** v1.30.1+ benchmark показал что Coder читает /health route и копирует его body как template для нового /version (вместо использования task description return value).
+**Цель:** v1.30.1+ bench show'ало паттерн — Coder читает sibling route (/health) и копирует body как template вместо того чтобы использовать return value из task description (`{version: '1.0.0'}`).
 
-- [ ] Coder system prompt addition: "the new code's content comes from the task description, not from sibling routes — if the task says return X, return X. Don't copy the shape of an adjacent handler"
-- [ ] Cheap prompt edit, high value
+- [x] [packages/agents/src/tool-calling-coder.ts](packages/agents/src/tool-calling-coder.ts) `SYSTEM_PROMPT` — добавлена секция `CONTENT COMES FROM THE TASK DESCRIPTION — NOT FROM SIBLING CODE`. Объясняет: read_file для STRUCTURE (где вставить, indentation, imports), не для копирования logic; new code's BEHAVIOR из task description; specific example (/version → `return { version: '1.0.0' }`)
+- [x] No code logic changes; 280/280 unit-tests still green; 12/12 build
 
-#### v1.30.5 (опционально) — Verify-syntax tool в tool-calling Coder (~2-3 часа)
-- [ ] После `replace_in_file`, WorkingSet делает brace-balance check файла; если unbalanced → return warning в tool result, модель retry'ит
-- [ ] **Атакует:** structural placement error из v1.30 (getSize метод вне класса)
+**Live bench /version на rag-system-target:**
+- ✓ **Впервые** Coder выдал correct content `return { version: '1.0.0' }` (vs предыдущие cargo-cult клоны /health body). Прямое behavioral change от prompt section
+- ✗ **Surface'ился new failure layer — structural placement.** `replace_in_file(start_line, end_line)` consumed закрывающий `});` от /health, заменил на новый /version handler без replacement closing brace. File syntactically broken: /version вложен внутрь /health body
+- ✗ Fixer затем пытался recover ~10 мин, Ollama crashed (same v1.30.3 ceiling)
+
+**Cumulative progression на /version:**
+| Iteration | Coder did right | Coder did wrong |
+|---|---|---|
+| v1.30.1 | server.ts in-scope | cargo-cult content |
+| v1.30.3 | server.ts in-scope | cargo-cult, Fixer crash |
+| v1.30.3.1 | server.ts in-scope | cargo-cult, attempt #1 ok #2 crash |
+| **v1.30.4** | **server.ts in-scope, content CORRECT** | **structural placement off (closing brace eaten)** |
+
+Six iterations peeled six different failure modes. v1.30.4 closed the **content** layer; v1.30.5 нужен для **placement** layer.
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-29-v1.30.4-cargo-cult-fix.md](docs/benchmarks/runs/2026-04-29-v1.30.4-cargo-cult-fix.md)
+
+#### v1.30.5 — Verify-syntax tool после replace_in_file (🔴 next, ~3-4 часа)
+
+**Цель:** v1.30.4 surface'ил что Coder может выбрать line range которая consumes structural delimiters (closing brace) → файл становится syntactically broken даже когда content правильный. Validation потом catch'ит, Fixer iterates без convergence, Ollama crashes.
+
+- [ ] `WorkingSet.replace()` после применения edit — fast syntactic check файла (brace/paren/bracket balance — простой токен-уровневый проход с string/comment awareness)
+- [ ] Если unbalanced → tool result returns `error: edit at lines X-Y left the file unbalanced (expected matching '})', got '});')` → модель видит warning в tool message, retry'ит within its same loop, до того как validation вообще запустится
+- [ ] Brace balance check minimal: `{` `}` `[` `]` `(` `)` count, accounting for strings и comments. Не full parse — это costly и язык-specific
+- [ ] **Атакует:** structural placement error из v1.30.4 + getSize-outside-class из v1.30 + similar class
+
+После v1.30.5 expect first end-to-end GREEN commit на 91-файловом проекте: content correct (v1.30.4) + placement correct (v1.30.5) + scope correct (v1.30.1) + Fixer rarely fires + Ollama не крашит.
 
 #### v1.31+ — Sub-agents (после v1.30)
 - `BugFixAgent`, `RefactorAgent`, `FeatureAgent`, `MigrationAgent` — специализированные роли

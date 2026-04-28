@@ -203,6 +203,12 @@ Workflow:
 4. Read again if a follow-up edit depends on the new state.
 5. When the step is complete, call done() exactly once.
 
+CONTENT COMES FROM THE TASK DESCRIPTION — NOT FROM SIBLING CODE. This is the most common silent failure mode:
+- read_file is for understanding STRUCTURE (where to put the new code, what indentation/imports/patterns the file uses) — NOT for copying logic. The new code's BEHAVIOR is specified in the task description.
+- If the task says \`add a /version endpoint that returns { version: '1.0.0' }\`, your new_text MUST contain \`return { version: '1.0.0' }\`. It MUST NOT contain a clone of the /health handler's body just because /health was the nearest example you read.
+- Read sibling routes/methods to learn HOW the file is wired (handler signature, registration style, helper imports). Then write the code the TASK asked for, with that wiring around it.
+- A handler that echoes its neighbour's body instead of doing what was asked is wrong even if the file compiles. Validation will not necessarily catch it; the operator will.
+
 Rules:
 - Match the project's conventions: test framework, module type, .js suffix in imports for NodeNext, strict mode, indentation style.
 - Follow the repo-map provided in context — do NOT reference symbols, files, or methods that aren't listed there (or that you create in this same step).
