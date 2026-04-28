@@ -34,7 +34,38 @@ import type { FixerOutput } from './fixer.js';
  *   issues.
  */
 
-const MAX_TOOL_CALLS = 50;
+// Fixer should converge faster than Coder — it's addressing a known issue, not
+// implementing a feature. Tighter budget keeps the conversation short and
+// prevents the model from wandering into more issues than it was asked to fix.
+const MAX_TOOL_CALLS = 25;
+
+// Conversation pruning thresholds. v1.30.3 live benchmark showed Ollama
+// `fetch failed` after ~7 minutes of Fixer round-trips on a 91-file project —
+// the conversation grew linearly (each round adds 2 messages) until the llama
+// runner OOMed. Keep system prompt + the initial user task message intact,
+// trim the middle of the round-trip log, keep the most recent K rounds.
+//
+// Numbers picked empirically: on 25 max calls, K=8 means we always show the
+// last 8 round-trips even when the loop has run further. System+user adds 2;
+// total kept = 2 + 16 = 18 messages, well under any model's context limit.
+const HISTORY_PRUNE_THRESHOLD = 22; // start pruning once total messages exceed this
+const HISTORY_KEEP_TAIL = 16;       // keep this many trailing messages (8 round-trips)
+const HISTORY_KEEP_HEAD = 2;        // keep system prompt + initial user message
+
+export function pruneHistory(messages: ToolLoopMessage[]): boolean {
+  if (messages.length <= HISTORY_PRUNE_THRESHOLD) return false;
+  const head = messages.slice(0, HISTORY_KEEP_HEAD);
+  const tail = messages.slice(-HISTORY_KEEP_TAIL);
+  // Add a synthetic note about the truncation so the model knows it happened.
+  const note: ToolLoopMessage = {
+    role: 'user',
+    content:
+      `[Conversation pruned: ${messages.length - HISTORY_KEEP_HEAD - HISTORY_KEEP_TAIL} earlier tool-call rounds omitted to fit context. Continue from the most recent state.]`,
+  };
+  messages.length = 0;
+  messages.push(...head, note, ...tail);
+  return true;
+}
 
 const FIXER_SYSTEM_PROMPT = `You are a Code Fixer working through tools.
 Given a list of validation issues (typecheck or test failures) and the current set of files, make MINIMAL targeted edits to fix each issue.
@@ -194,6 +225,13 @@ export class ToolCallingFixerAgent {
           doneCalled = true;
           break;
         }
+      }
+
+      // Prune conversation history before the next Ollama round-trip. Without
+      // this, long Fixer sessions on real projects crash the llama runner —
+      // see v1.30.3 benchmark notes.
+      if (pruneHistory(messages)) {
+        logger.debug({ agent: this.name, retainedMessages: messages.length }, 'Pruned Fixer conversation history');
       }
     }
 

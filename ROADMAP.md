@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.30.3 — tool-calling Fixer (полная архитектурная completion миграции с patch-based на tool-calling); 274/274 unit-тестов. Live bench показал что Coder phase clean, Fixer phase крашит Ollama после ~7 мин long conversation — следующий шаг v1.30.3.1 history truncation.  
+**Статус проекта**: 🟢 v1.30.3.1 — Fixer history pruning + smaller call budget; 280/280 unit-тестов. **Первый раз** Fixer attempt завершился без Ollama crash на 91-файловом проекте (2 мин). Дальнейший unblock — v1.30.4 (Coder cargo-cult prompt fix) для устранения корневой причины долгих Fixer rounds.  
 **Последнее обновление**: 2026-04-29  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -744,14 +744,28 @@ Hypothesis: Architect/Reviewer/Tester не нуждаются в full source —
 
 **Detailed run-file:** [docs/benchmarks/runs/2026-04-29-v1.30.3-tool-calling-fixer.md](docs/benchmarks/runs/2026-04-29-v1.30.3-tool-calling-fixer.md)
 
-#### v1.30.3.1 — Fixer history truncation + smaller call budget (🔴 next, ~1-2 часа)
+#### v1.30.3.1 — Fixer history truncation + smaller call budget (✅ реализовано)
 
-**Атакует:** Ollama crash на длинных Fixer loops (наблюдалось на v1.30.3 двух runs).
+**Цель:** v1.30.3 live bench показал Ollama `fetch failed` после ~7-8 минут tool-calling Fixer'a — conversation history рос линейно (каждый round +2 messages), llama runner OOM. Pruning + меньший call budget.
 
-- [ ] В ToolCallingFixerAgent: после N rounds keep только system prompt + initial user task + last K round-trips (e.g. last 6); или summarize-and-restart на half budget
-- [ ] Lower MAX_TOOL_CALLS для Fixer 50 → 25 (Fixer должен converge быстрее Coder'а)
-- [ ] Target: keep Ollama input под ~15K tokens regardless of round count
-- [ ] Re-run rag-system bench — expect Fixer phase complete без crashes
+- [x] [packages/agents/src/tool-calling-fixer.ts](packages/agents/src/tool-calling-fixer.ts):
+  - `pruneHistory(messages)` — когда `messages.length > 22`, keep `system + initial user task + last 16 trail messages` (8 round-trips); inserts `[Conversation pruned: N earlier rounds omitted]` marker. Called every round в Fixer loop
+  - `MAX_TOOL_CALLS` 50 → **25** (Fixer должен converge быстрее Coder'a — он fix'ит known issue, не feature)
+- [x] 6 новых unit-тестов: under-threshold no-op, head/tail preservation, recent rounds intact, truncation note, total budget cap, return-value semantics → 12/12 в файле, 280/280 общая
+
+**Live bench /version на rag-system-target:**
+
+| Phase | v1.30.3 | **v1.30.3.1** |
+|---|---|---|
+| Coder | server.ts in-scope | server.ts in-scope (same) |
+| Fixer attempt #1 | crashed Ollama (~8m) | **completed (~2m)** ✓ first time! |
+| Fixer attempt #2 | n/a | crashed Ollama (~8m) |
+
+**Партиальный win:** **первый раз tool-calling Fixer attempt завершается без crash на 91-файловом проекте**. Pruning работает. Но attempt #2 всё равно crashes — каждый attempt fresh state, pruning resets между attempts; если task не fixable из validation output (cargo-cult underlying issue), второй attempt просто iterates pointlessly до crash.
+
+**Корневая причина persistent failure: Coder cargo-culting** (v1.30.1+ benchmark). /version handler копирует /health body вместо `{version: '1.0.0'}`. Fixer read'ит file, но typecheck/test errors не указывают "return value wrong" — Fixer iterates без convergence. **v1.30.4 (Coder prompt fix) — следующий unblock.**
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-29-v1.30.3.1-fixer-history-pruning.md](docs/benchmarks/runs/2026-04-29-v1.30.3.1-fixer-history-pruning.md)
 
 #### v1.30.4 — Coder prompt fix for cargo-culting (~30 мин)
 
