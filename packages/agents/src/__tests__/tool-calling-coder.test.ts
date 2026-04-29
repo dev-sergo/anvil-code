@@ -13,9 +13,24 @@ import type { WritePolicy } from '../tool-calling-coder.js';
 import { WorkingSet } from '../working-set.js';
 
 describe('TOOL_DEFINITIONS', () => {
-  it('exposes the five expected tools', () => {
+  it('exposes the line-coordinate tools (4) + structural tools (6) + done', () => {
     const names = TOOL_DEFINITIONS.map(t => t.function.name);
-    expect(names).toEqual(['read_file', 'replace_in_file', 'create_file', 'delete_file', 'done']);
+    expect(names).toEqual([
+      // Line-coordinate / fallback tools
+      'read_file',
+      'replace_in_file',
+      'create_file',
+      'delete_file',
+      // v1.31 structural tools
+      'add_method',
+      'replace_method',
+      'replace_function',
+      'add_route',
+      'add_import',
+      'add_export',
+      // Loop terminator
+      'done',
+    ]);
   });
 
   it('every tool has a non-empty description and parameters object', () => {
@@ -603,5 +618,324 @@ export function buildServer() {
     if (changes[0].action === 'create') {
       expect(changes[0].content).toBe("console.log('world');\nexport {};\n");
     }
+  });
+});
+
+describe('dispatchToolCall — structural tools (v1.31)', () => {
+  let tmpDir: string;
+  let ws: WorkingSet;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tool-struct-'));
+    ws = new WorkingSet(tmpDir);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function write(rel: string, content: string): void {
+    const abs = path.join(tmpDir, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content);
+  }
+
+  it('add_route inserts a new Fastify route after the existing one', () => {
+    write(
+      'src/server.ts',
+      [
+        'export async function buildServer() {',
+        '  const app = Fastify();',
+        "  app.get('/health', async () => ({ status: 'ok' }));",
+        '  return app;',
+        '}',
+        '',
+      ].join('\n'),
+    );
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_route',
+          arguments: {
+            file: 'src/server.ts',
+            http_method: 'GET',
+            route_path: '/version',
+            body: "return { version: '1.0.0' };",
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text.startsWith('ok:')).toBe(true);
+    const after = ws.read('src/server.ts')!;
+    expect(after).toContain("app.get('/version', async (request, reply) => {");
+    expect(after).toContain("return { version: '1.0.0' };");
+    // /health untouched
+    expect(after).toContain("app.get('/health', async () => ({ status: 'ok' }));");
+  });
+
+  it('add_method inserts a new method into a named class', () => {
+    write(
+      'src/svc.ts',
+      [
+        'export class UserService {',
+        '  list(): string[] {',
+        "    return [];",
+        '  }',
+        '}',
+        '',
+      ].join('\n'),
+    );
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_method',
+          arguments: {
+            file: 'src/svc.ts',
+            container: 'UserService',
+            source: 'getSize(): number {\n  return this.list().length;\n}',
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text.startsWith('ok:')).toBe(true);
+    const after = ws.read('src/svc.ts')!;
+    expect(after).toContain('getSize(): number {');
+    expect(after).toContain('return this.list().length;');
+  });
+
+  it('replace_method rewrites an existing method body', () => {
+    write(
+      'src/svc.ts',
+      ['class Foo {', '  bar(): number { return 1; }', '}', ''].join('\n'),
+    );
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'replace_method',
+          arguments: {
+            file: 'src/svc.ts',
+            container: 'Foo',
+            name: 'bar',
+            source: 'bar(): number { return 99; }',
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text.startsWith('ok:')).toBe(true);
+    expect(ws.read('src/svc.ts')!).toContain('return 99;');
+    expect(ws.read('src/svc.ts')!).not.toContain('return 1;');
+  });
+
+  it('replace_function rewrites a top-level function', () => {
+    write('src/util.ts', 'export function add(a: number, b: number) { return a + b; }\n');
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'replace_function',
+          arguments: {
+            file: 'src/util.ts',
+            name: 'add',
+            source: 'export function add(a: number, b: number) { return a - b; }',
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text.startsWith('ok:')).toBe(true);
+    expect(ws.read('src/util.ts')!).toContain('return a - b;');
+  });
+
+  it('add_import adds a new import after the last existing import', () => {
+    write(
+      'src/server.ts',
+      ["import Fastify from 'fastify';", '', 'export const X = 1;', ''].join('\n'),
+    );
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_import',
+          arguments: {
+            file: 'src/server.ts',
+            source: './logger.js',
+            names: ['logger'],
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text.startsWith('ok:')).toBe(true);
+    expect(ws.read('src/server.ts')!).toContain("import { logger } from './logger.js';");
+  });
+
+  it('add_import is idempotent — returns ok with "no change" when names already imported', () => {
+    write('src/a.ts', "import { x } from './lib.js';\nexport {};\n");
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_import',
+          arguments: {
+            file: 'src/a.ts',
+            source: './lib.js',
+            names: ['x'],
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text).toMatch(/ok: no change/);
+    // File untouched
+    expect(ws.read('src/a.ts')!).toBe("import { x } from './lib.js';\nexport {};\n");
+  });
+
+  it('add_export appends a new top-level export', () => {
+    write('src/types.ts', "export const A = 1;\n");
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_export',
+          arguments: {
+            file: 'src/types.ts',
+            source: 'export const B = 2;',
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text.startsWith('ok:')).toBe(true);
+    expect(ws.read('src/types.ts')!).toMatch(/export const A = 1;\s+export const B = 2;/);
+  });
+
+  it('structural tools enforce scope discipline (path not in allowed)', () => {
+    write('src/server.ts', 'export class Foo {}\n');
+    write('src/other.ts', 'export class Foo {}\n');
+
+    const policy: WritePolicy = {
+      allowed: new Set(['src/server.ts']),
+      forbiddenPatterns: [],
+    };
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_method',
+          arguments: {
+            file: 'src/other.ts',
+            container: 'Foo',
+            source: 'bar() {}',
+          },
+        },
+      },
+      ws,
+      policy,
+    );
+
+    expect(r.text).toMatch(/^error:/);
+    expect(r.text).toMatch(/not named in the task/);
+    // File untouched
+    expect(ws.read('src/other.ts')!).toBe('export class Foo {}\n');
+  });
+
+  it('structural tools surface locator errors verbatim', () => {
+    write('src/svc.ts', 'export class Foo {}\n');
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'replace_method',
+          arguments: {
+            file: 'src/svc.ts',
+            container: 'Foo',
+            name: 'missing',
+            source: 'missing() {}',
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text).toMatch(/^error:/);
+    expect(r.text).toMatch(/method Foo\.missing not found/);
+  });
+
+  it('structural tools refuse forbidden config files (package.json) by default', () => {
+    write('package.json', '{"name":"test"}\n');
+
+    const policy: WritePolicy = {
+      allowed: new Set(),
+      forbiddenPatterns: [/(?:^|\/)package\.json$/],
+    };
+
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_export',
+          arguments: {
+            file: 'package.json',
+            source: 'export const X = 1;',
+          },
+        },
+      },
+      ws,
+      policy,
+    );
+
+    expect(r.text).toMatch(/^error:/);
+    expect(r.text).toMatch(/protected configuration set/);
+  });
+
+  it('add_method on a non-existent file fails cleanly (must use create_file first)', () => {
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_method',
+          arguments: {
+            file: 'src/missing.ts',
+            container: 'Foo',
+            source: 'bar() {}',
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text).toMatch(/^error:/);
+    expect(r.text).toMatch(/file does not exist/);
+    expect(r.text).toMatch(/create_file/);
+  });
+
+  it('structural tools require a non-empty file argument', () => {
+    const r = dispatchToolCall(
+      {
+        function: {
+          name: 'add_route',
+          arguments: {
+            http_method: 'GET',
+            route_path: '/x',
+            body: 'return {};',
+          },
+        },
+      },
+      ws,
+    );
+
+    expect(r.text).toMatch(/^error:/);
+    expect(r.text).toMatch(/requires a non-empty "file" argument/);
   });
 });

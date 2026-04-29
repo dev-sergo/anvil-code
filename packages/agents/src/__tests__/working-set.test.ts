@@ -149,4 +149,50 @@ describe('WorkingSet', () => {
     expect(changes[0].action).toBe('create');
     if (changes[0].action === 'create') expect(changes[0].content).toBe('ONE\ntwo\n');
   });
+
+  it('insertBefore squeezes content in front of the named line, preserving the rest', () => {
+    write('src/a.ts', 'one\ntwo\nthree\n');
+    const ws = new WorkingSet(tmpDir);
+    const r = ws.insertBefore('src/a.ts', 2, 'INSERTED\n');
+    expect(r.ok).toBe(true);
+    expect(ws.read('src/a.ts')).toBe('one\nINSERTED\ntwo\nthree\n');
+  });
+
+  it('insertBefore at line 1 prepends to the file', () => {
+    write('src/a.ts', 'one\ntwo\n');
+    const ws = new WorkingSet(tmpDir);
+    const r = ws.insertBefore('src/a.ts', 1, 'HEADER\n');
+    expect(r.ok).toBe(true);
+    expect(ws.read('src/a.ts')).toBe('HEADER\none\ntwo\n');
+  });
+
+  it('insertBefore at the trailing-empty-line position appends after the last content line', () => {
+    write('src/a.ts', 'one\ntwo\n');
+    const ws = new WorkingSet(tmpDir);
+    // 'one\ntwo\n'.split('\n') = ['one','two','']. Line 3 is the trailing empty
+    // that sits after the file-ending '\n'. Inserting before line 3 squeezes
+    // new content between "two" and that trailing empty, i.e. appending it
+    // before the file's final newline.
+    const r = ws.insertBefore('src/a.ts', 3, 'TAIL\n');
+    expect(r.ok).toBe(true);
+    expect(ws.read('src/a.ts')).toBe('one\ntwo\nTAIL\n');
+  });
+
+  it('insertBefore rejects non-existent file, line < 1, line out of range', () => {
+    const ws = new WorkingSet(tmpDir);
+    expect(ws.insertBefore('nope.ts', 1, 'X').ok).toBe(false);
+    write('src/a.ts', 'one\n');
+    expect(ws.insertBefore('src/a.ts', 0, 'X').ok).toBe(false);
+    expect(ws.insertBefore('src/a.ts', 999, 'X').ok).toBe(false);
+  });
+
+  it('insertBefore on an in-loop created file keeps action="create"', () => {
+    const ws = new WorkingSet(tmpDir);
+    ws.create('new.ts', 'a\nb\n');
+    ws.insertBefore('new.ts', 2, 'MID\n');
+    const changes = ws.toFileChanges();
+    expect(changes).toHaveLength(1);
+    expect(changes[0].action).toBe('create');
+    if (changes[0].action === 'create') expect(changes[0].content).toBe('a\nMID\nb\n');
+  });
 });

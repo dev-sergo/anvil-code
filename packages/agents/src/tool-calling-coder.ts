@@ -4,6 +4,15 @@ import type { ModelRole, TaskMode, FileChange } from '@rag-system/shared';
 import { logger, taskEvents, currentTaskContext } from '@rag-system/shared';
 import { WorkingSet } from './working-set.js';
 import type { CoderOutput, FileReadyCallback } from './coder.js';
+import {
+  locateAddMethod,
+  locateReplaceMethod,
+  locateReplaceFunction,
+  locateAddRoute,
+  locateAddImport,
+  locateAddExport,
+} from './structural-edits.js';
+import type { LocateResult } from './structural-edits.js';
 
 /**
  * Coder reimagined as a tool-calling loop.
@@ -178,6 +187,120 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'add_method',
+      description:
+        "Add a new method to a top-level class. Pass the FULL method declaration in `source` (modifiers + signature + body — e.g. `async getSize(): Promise<number> { return this.length; }`). The runtime locates the class by name, parses your source for the method name, and inserts the new method just before the class's closing brace with correct indentation. Errors if the class isn't found, the method already exists (use replace_method), or `source` doesn't parse as exactly one method.",
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'Project-relative file path' },
+          container: { type: 'string', description: 'Top-level class name to add the method to' },
+          source: { type: 'string', description: 'Full method declaration: `<modifiers> <name>(<params>): <return> { <body> }`' },
+        },
+        required: ['file', 'container', 'source'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'replace_method',
+      description:
+        "Rewrite the body+signature of an existing method on a top-level class. `source` is the full new method declaration (modifiers + signature + body); its method name must match `name`. Decorators/modifiers in source replace the previous ones. Leading jsdoc comments above the method are preserved (they sit on different lines outside the replace range). To rename, use delete_file/replace_in_file or remove + add_method.",
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'Project-relative file path' },
+          container: { type: 'string', description: 'Top-level class name owning the method' },
+          name: { type: 'string', description: 'Existing method name to replace' },
+          source: { type: 'string', description: 'Full new method declaration; method name must match `name`' },
+        },
+        required: ['file', 'container', 'name', 'source'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'replace_function',
+      description:
+        "Rewrite a top-level FunctionDeclaration. `source` is the full new function declaration; its function name must match `name`. Targets the first declaration with that name — for overloads (signature + implementation), the implementation body should be edited via replace_in_file.",
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'Project-relative file path' },
+          name: { type: 'string', description: 'Existing top-level function name to replace' },
+          source: { type: 'string', description: 'Full new function declaration: `function <name>(...) { ... }` (or `export function ...`)' },
+        },
+        required: ['file', 'name', 'source'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_route',
+      description:
+        "Add a Fastify-style route. The runtime finds the existing routes (app.get/post/...) in the file, copies the instance name (app/server/fastify/instance/route) and indent style, and inserts a new `<instance>.<method>('<path>', async <params> => { <body> });` after the last existing route. `body` is the handler body's statements only (no surrounding `async () => {}`). The file must already have at least one route — bootstrap a brand-new server with create_file or replace_in_file.",
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'Project-relative file path containing existing Fastify routes' },
+          http_method: {
+            type: 'string',
+            description: 'HTTP method',
+            enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'],
+          },
+          route_path: { type: 'string', description: "URL path (e.g. '/version'). Must not contain a single quote, backslash, or newline" },
+          body: { type: 'string', description: 'Handler body — the statements that go inside `async (request, reply) => { ... }`' },
+          params: { type: 'string', description: "Optional handler params override (default '(request, reply)'). Pass '()' for a no-arg handler" },
+        },
+        required: ['file', 'http_method', 'route_path', 'body'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_import',
+      description:
+        "Ensure the file imports the requested names from a module. Idempotent: if all requested names are already imported with matching type-only flag, returns success without changing the file. If an import from the same source exists and is compatible, the existing line is replaced with a merged import. Otherwise a new import is appended after the last existing import (or at the top of the file). Doesn't support namespace imports (`import * as ns`).",
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'Project-relative file path' },
+          source: { type: 'string', description: "Module specifier (e.g. 'pino', './lib.js')" },
+          names: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Named imports to add (e.g. ["FastifyInstance", "FastifyRequest"])',
+          },
+          default_name: { type: 'string', description: 'Optional default import name (e.g. "pino" for `import pino from \'pino\';`)' },
+          type_only: { type: 'boolean', description: 'If true, render `import type { ... }`. Must match the existing import\'s type-only flag if there is one' },
+        },
+        required: ['file', 'source'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_export',
+      description:
+        "Add a top-level export to the file. `source` is the full statement (e.g. `export const X = 42;`, `export function foo() { ... }`, `export type T = ...`, `export { x }`). Inserted after the last existing top-level export, else after the last import, else at the top of the file. Use this when you need to introduce a brand-new exported symbol — to modify an existing exported symbol, use replace_function/replace_method/replace_in_file.",
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'Project-relative file path' },
+          source: { type: 'string', description: 'Full export statement, e.g. `export const FOO = 42;`' },
+        },
+        required: ['file', 'source'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'done',
       description:
         'Signal that all changes for the current step are complete. After this, the runtime hands the file changes to the validator. Call this exactly once when finished. Do not call done() if you have made no changes — instead, call replace_in_file/create_file at least once first.',
@@ -186,22 +309,70 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ];
 
+/**
+ * Tool-call argument key holding the project-relative file path. Most tools
+ * use `path`; structural tools use `file` to disambiguate from `route_path`
+ * and similar nested URL/module-path arguments. The dispatcher and the per-
+ * file event emitter both consult this map to extract the path consistently.
+ */
+const FILE_ARG_KEY: Record<string, string> = {
+  read_file: 'path',
+  replace_in_file: 'path',
+  create_file: 'path',
+  delete_file: 'path',
+  add_method: 'file',
+  replace_method: 'file',
+  replace_function: 'file',
+  add_route: 'file',
+  add_import: 'file',
+  add_export: 'file',
+};
+
+/**
+ * Tools that mutate file content (used to emit per-file `coder_file_ready`
+ * events for SSE clients). delete_file is excluded — clients track removals
+ * separately via the final FileChange[] from toFileChanges().
+ */
+const WRITE_EMITTING_TOOLS = new Set([
+  'create_file',
+  'replace_in_file',
+  'add_method',
+  'replace_method',
+  'replace_function',
+  'add_route',
+  'add_import',
+  'add_export',
+]);
+
 const SYSTEM_PROMPT = `You are an expert Software Engineer working through tools.
 Given a step description and project context, you implement the change by calling tools.
 
-YOU CANNOT WRITE THE CODE DIRECTLY IN A REPLY. The only way to make changes is via tool calls:
-- read_file(path) — see the actual current bytes of a file
-- replace_in_file(path, start_line, end_line, new_text) — modify an existing file by line range
+YOU CANNOT WRITE THE CODE DIRECTLY IN A REPLY. The only way to make changes is via tool calls.
+
+STRUCTURAL TOOLS (PREFERRED for TypeScript/JavaScript edits):
+These tools take symbol names instead of line coordinates and handle indentation for you. Always prefer them when the change fits.
+- add_method(file, container, source) — add a new method to an existing class
+- replace_method(file, container, name, source) — rewrite an existing method's signature+body
+- replace_function(file, name, source) — rewrite a top-level function
+- add_route(file, http_method, route_path, body) — add a Fastify route after the last existing one
+- add_import(file, source, names?, default_name?, type_only?) — add or merge an import
+- add_export(file, source) — add a new top-level export
+
+LINE-COORDINATE TOOLS (fallback):
+- read_file(path) — see actual current bytes with line numbers (use freely)
+- replace_in_file(path, start_line, end_line, new_text) — line-range edit. Use ONLY when no structural tool fits — typically for non-source content (markdown, JSON, YAML, plain text) or unusual code shapes (single-line classes, decorators between import statements, etc.). Picking line coordinates for source code is fragile and has caused multiple categories of bugs in past benchmarks.
 - create_file(path, content) — make a new file
 - delete_file(path) — remove a file
 - done() — signal completion
 
 Workflow:
-1. If you're modifying an existing file, ALWAYS call read_file first to see its actual content with line numbers. This is non-negotiable — you must base every replace_in_file on the lines you just read.
-2. Decide the smallest possible edit. Replace as few lines as practical.
-3. Call replace_in_file (or create_file for new files). The "new_text" you provide is inserted verbatim — pay attention to indentation matching the surrounding code.
-4. Read again if a follow-up edit depends on the new state.
+1. read_file the target if you need to see the current symbols/structure (e.g. existing class names, existing routes).
+2. Pick the structural tool whose contract matches what you want to do. If no structural tool fits, fall back to replace_in_file.
+3. For structural tools, the "source" you pass is the full declaration (modifiers + signature + body). The runtime re-indents it; you can write at column 0 if you prefer.
+4. When a structural tool errors (e.g. "class X not found"), it usually means your assumption about the file is wrong. read_file again, fix the assumption, retry.
 5. When the step is complete, call done() exactly once.
+
+CRITICAL: line numbers shift after every edit. If you call any tool that mutates a file (add_method, add_import, replace_in_file, ...) and then need to call replace_in_file on the same file, you MUST read_file again first to see the new line numbers. Stale line coords from the original read are wrong after the file has been mutated, and a replace_in_file on stale coords corrupts the file.
 
 CONTENT COMES FROM THE TASK DESCRIPTION — NOT FROM SIBLING CODE. This is the most common silent failure mode:
 - read_file is for understanding STRUCTURE (where to put the new code, what indentation/imports/patterns the file uses) — NOT for copying logic. The new code's BEHAVIOR is specified in the task description.
@@ -350,6 +521,76 @@ function shouldBalanceCheck(path: string): boolean {
   return BALANCE_CHECK_EXTS.test(path);
 }
 
+/**
+ * Apply a structural edit (`add_method`, `replace_method`, ...) to a file.
+ *
+ * The locator function takes the current file content and returns either an
+ * error or a StructuralEdit (insert / replace / noop). This helper:
+ *  - validates path + write policy (same scope discipline as replace_in_file)
+ *  - reads current content from the WorkingSet
+ *  - runs the locator to get an edit
+ *  - applies the edit via `ws.insertBefore` or `ws.replace`
+ *  - runs the v1.30.5 brace-balance check + rollback as defense-in-depth
+ *
+ * AST-derived edits should always be balanced by construction, but if the
+ * source the model passed had unmatched braces inside a string literal or
+ * similar parser-confusing form, we still catch and roll back.
+ */
+function executeStructuralEdit(
+  toolLabel: string,
+  filePath: string,
+  ws: WorkingSet,
+  policy: WritePolicy,
+  locate: (content: string) => LocateResult,
+): ToolDispatchResult {
+  if (!filePath) {
+    return { text: `error: ${toolLabel} requires a non-empty "file" argument`, done: false };
+  }
+  const allow = isWriteAllowed(filePath, policy);
+  if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
+
+  const content = ws.read(filePath);
+  if (content === null) {
+    return { text: `error: file does not exist: ${filePath}. Use create_file to make a new file`, done: false };
+  }
+
+  const located = locate(content);
+  if (!located.ok) return { text: `error: ${located.error}`, done: false };
+
+  const edit = located.edit;
+  if (edit.kind === 'noop') {
+    return { text: `ok: no change needed — ${edit.reason}`, done: false };
+  }
+
+  const balanceBefore = shouldBalanceCheck(filePath)
+    ? { content, check: checkBraceBalance(content) }
+    : null;
+
+  const result =
+    edit.kind === 'insert'
+      ? ws.insertBefore(filePath, edit.line, edit.text)
+      : ws.replace(filePath, edit.startLine, edit.endLine, edit.text);
+  if (!result.ok) {
+    return { text: `error: ${result.error}`, done: false };
+  }
+
+  if (balanceBefore && balanceBefore.check.ok) {
+    const after = ws.read(filePath) ?? '';
+    const balanceAfter = checkBraceBalance(after);
+    if (!balanceAfter.ok) {
+      ws.overwriteRaw(filePath, balanceBefore.content);
+      return {
+        text:
+          `error: ${toolLabel} would leave ${filePath} structurally unbalanced: ${balanceAfter.reason}. ` +
+          `The change was rolled back. The source you passed likely contains unmatched braces or quote-confusing content`,
+        done: false,
+      };
+    }
+  }
+
+  return { text: `ok: ${toolLabel} applied to ${filePath}`, done: false };
+}
+
 export function dispatchToolCall(
   call: ToolCall,
   ws: WorkingSet,
@@ -451,6 +692,71 @@ export function dispatchToolCall(
       const r = ws.delete(filePath);
       if (!r.ok) return { text: `error: ${r.error}`, done: false };
       return { text: `ok: deleted ${filePath}`, done: false };
+    }
+    case 'add_method': {
+      const filePath = String(args.file ?? '');
+      const container = String(args.container ?? '');
+      const source = typeof args.source === 'string' ? args.source : '';
+      if (!container) return { text: 'error: add_method requires "container" (the class name)', done: false };
+      if (!source) return { text: 'error: add_method requires "source" (the full method declaration)', done: false };
+      return executeStructuralEdit('add_method', filePath, ws, policy, c =>
+        locateAddMethod(c, container, source),
+      );
+    }
+    case 'replace_method': {
+      const filePath = String(args.file ?? '');
+      const container = String(args.container ?? '');
+      const methodName = String(args.name ?? '');
+      const source = typeof args.source === 'string' ? args.source : '';
+      if (!container) return { text: 'error: replace_method requires "container"', done: false };
+      if (!methodName) return { text: 'error: replace_method requires "name"', done: false };
+      if (!source) return { text: 'error: replace_method requires "source"', done: false };
+      return executeStructuralEdit('replace_method', filePath, ws, policy, c =>
+        locateReplaceMethod(c, container, methodName, source),
+      );
+    }
+    case 'replace_function': {
+      const filePath = String(args.file ?? '');
+      const fnName = String(args.name ?? '');
+      const source = typeof args.source === 'string' ? args.source : '';
+      if (!fnName) return { text: 'error: replace_function requires "name"', done: false };
+      if (!source) return { text: 'error: replace_function requires "source"', done: false };
+      return executeStructuralEdit('replace_function', filePath, ws, policy, c =>
+        locateReplaceFunction(c, fnName, source),
+      );
+    }
+    case 'add_route': {
+      const filePath = String(args.file ?? '');
+      const httpMethod = String(args.http_method ?? '');
+      const routePath = String(args.route_path ?? '');
+      const body = typeof args.body === 'string' ? args.body : '';
+      const params = typeof args.params === 'string' ? args.params : undefined;
+      if (!httpMethod) return { text: 'error: add_route requires "http_method"', done: false };
+      if (!routePath) return { text: 'error: add_route requires "route_path"', done: false };
+      if (!body) return { text: 'error: add_route requires "body" (the handler body)', done: false };
+      return executeStructuralEdit('add_route', filePath, ws, policy, c =>
+        locateAddRoute(c, httpMethod, routePath, body, params),
+      );
+    }
+    case 'add_import': {
+      const filePath = String(args.file ?? '');
+      const source = String(args.source ?? '');
+      const namesArg = args.names;
+      const names = Array.isArray(namesArg) ? namesArg.filter((n): n is string => typeof n === 'string') : [];
+      const defaultName = typeof args.default_name === 'string' && args.default_name ? args.default_name : undefined;
+      const typeOnly = args.type_only === true;
+      if (!source) return { text: 'error: add_import requires "source" (the module specifier)', done: false };
+      return executeStructuralEdit('add_import', filePath, ws, policy, c =>
+        locateAddImport(c, source, names, defaultName, typeOnly),
+      );
+    }
+    case 'add_export': {
+      const filePath = String(args.file ?? '');
+      const source = typeof args.source === 'string' ? args.source : '';
+      if (!source) return { text: 'error: add_export requires "source" (the full export statement)', done: false };
+      return executeStructuralEdit('add_export', filePath, ws, policy, c =>
+        locateAddExport(c, source),
+      );
     }
     case 'done': {
       return { text: 'ok: changes finalized', done: true };
@@ -557,12 +863,17 @@ export class ToolCallingCoderAgent {
         // emit directly via taskEvents instead of going through the
         // partial-json-shaped onFileReady callback, because tool-calling
         // doesn't carry partial-file content (the WorkingSet does).
-        if (
-          ctx &&
-          (call.function.name === 'create_file' || call.function.name === 'replace_in_file')
-        ) {
-          const filePath = String(call.function.arguments.path ?? '');
-          if (filePath && !emittedFilesByPath.has(filePath) && result.text.startsWith('ok')) {
+        // v1.31: extended to all writing tools (structural + line-coord) via
+        // WRITE_EMITTING_TOOLS; the file-path key may be `path` (line-coord
+        // tools) or `file` (structural tools), looked up via FILE_ARG_KEY.
+        if (ctx && WRITE_EMITTING_TOOLS.has(call.function.name)) {
+          const argKey = FILE_ARG_KEY[call.function.name] ?? 'path';
+          const filePath = String(call.function.arguments[argKey] ?? '');
+          // Skip noop results — add_import returns "ok: no change needed ..."
+          // when everything is already imported, and we don't want a phantom
+          // "Coder produced X" event for a file we didn't touch.
+          const isNoChange = result.text.startsWith('ok: no change');
+          if (filePath && !emittedFilesByPath.has(filePath) && result.text.startsWith('ok') && !isNoChange) {
             emittedFilesByPath.add(filePath);
             const wsContent = ws.read(filePath) ?? '';
             taskEvents.emitEvent({

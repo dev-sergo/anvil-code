@@ -23,6 +23,18 @@ export interface GenerateOptions {
  * `tools` field of /api/chat for models that support tool calling (qwen2.5-coder,
  * llama3.1+, gemma2 with grammar etc.). Parameters use JSON Schema.
  */
+/**
+ * JSON-Schema property descriptor. Recursive on `items` so array properties
+ * can declare their element shape (`{ type: 'array', items: { type: 'string' }}`).
+ * Ollama and OpenAI both accept this shape on tool parameter properties.
+ */
+export interface ToolParamSchema {
+  type: string;
+  description?: string;
+  enum?: string[];
+  items?: ToolParamSchema;
+}
+
 export interface ToolDefinition {
   type: 'function';
   function: {
@@ -30,7 +42,7 @@ export interface ToolDefinition {
     description: string;
     parameters: {
       type: 'object';
-      properties: Record<string, { type: string; description?: string; enum?: string[] }>;
+      properties: Record<string, ToolParamSchema>;
       required?: string[];
     };
   };

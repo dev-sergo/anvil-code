@@ -2,8 +2,8 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.30.5 — verify-syntax tool после replace_in_file (brace balance check + rollback); 294/294 unit-тестов. **Первый раз task on rag-system-target completed без Ollama crash** — graduated с `task_failed` (infra) на `commit_skipped` (output quality). Семь iterations пилили семь failure modes; следующий шаг — стратегическая пауза на whack-a-mole (v1.31 sub-agents) или ещё одна micro-fix (v1.30.6 duplicate detection).  
-**Последнее обновление**: 2026-04-29  
+**Статус проекта**: 🟢 v1.31 — Structural anchor edits (`add_route` / `add_method` / `replace_method` / `replace_function` / `add_import` / `add_export`); 356/356 unit-тестов (+62 vs v1.30.5). **Coder layer для file-anchored atomic tasks решён**: `/version` на rag-system-target — byte-perfect via single `add_route` (32m → 12m); `getSize()` на rag-system-target — byte-perfect inside-class via `add_method` (v1.30 placed it OUTSIDE class). Variance переехала с "edit correctness" на "file/argument selection" — fundamentally более tractable failure class.  
+**Последнее обновление**: 2026-04-30  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
 ---
@@ -827,6 +827,70 @@ Six iterations peeled six different failure modes. v1.30.4 closed the **content*
 Brace balance correctly catches v1.30.4 failure (verified в unit test). Но новый failure это duplicate content — model в new_text включила re-paste sibling-route header, balance проходит (дубль самобалансируется), но файл структурно messy.
 
 **Detailed run-file:** [docs/benchmarks/runs/2026-04-29-v1.30.5-verify-syntax.md](docs/benchmarks/runs/2026-04-29-v1.30.5-verify-syntax.md)
+
+#### v1.31 — Structural anchor edits (✅ реализовано)
+
+**Цель:** v1.30 → v1.30.5 пилили 7 micro-failure-modes Coder'a в line-coord слое — каждый peeled новый layer (off-by-one, consumed brace, duplicate context, метод outside class). Архитектурный move — заменить `replace_in_file(start_line, end_line)` на симвoлoм-anchored инструменты, чтобы whole class of placement bugs стал impossible by construction.
+
+- [x] [packages/agents/src/structural-edits.ts](packages/agents/src/structural-edits.ts) — новый модуль с pure AST-помощниками (TypeScript Compiler API):
+  - `locateAddMethod(content, container, source)` — добавляет метод в класс, AST resolves the closing brace line
+  - `locateReplaceMethod(content, container, name, source)` — pinpoint replacement of method's signature+body; jsdoc preserved
+  - `locateReplaceFunction(content, name, source)` — top-level FunctionDeclaration
+  - `locateAddRoute(content, http_method, route_path, body, params?)` — Fastify-aware: walks for `app.METHOD(path, ...)` calls, copies actual instance name (app/server/fastify/instance/route) и indent style (2/4/tabs), inserts после последней route. Errors на duplicate, unknown method, unsafe path chars
+  - `locateAddImport(content, source, names?, default_name?, type_only?)` — идемпотентно: returns noop если уже всё там; merges names into existing import; inserts new после последнего import (или top of file). Не support'ит `import * as ns`
+  - `locateAddExport(content, source)` — appends после last top-level export, else после last import, else top
+- [x] [packages/agents/src/working-set.ts](packages/agents/src/working-set.ts) — `insertBefore(relPath, line, text)` для clean insertion semantics. Trailing `\n` — line terminator, не extra blank line
+- [x] [packages/agents/src/tool-calling-coder.ts](packages/agents/src/tool-calling-coder.ts) — 6 новых TOOL_DEFINITIONS, 6 dispatcher cases через `executeStructuralEdit(toolLabel, filePath, ws, policy, locator)` helper (scope discipline v1.30.1 + brace-balance defense v1.30.5 переиспользованы), `WRITE_EMITTING_TOOLS` + `FILE_ARG_KEY` extends event emission на все structural tools, SYSTEM_PROMPT rewritten — structural tools listed первыми как PREFERRED для TS/JS edits, `replace_in_file` demoted на fallback для non-source content
+- [x] [packages/agents/src/tool-calling-fixer.ts](packages/agents/src/tool-calling-fixer.ts) — symmetric prompt update; explicit warning что `add_import` requires `names` array
+- [x] [packages/model-router/src/types.ts](packages/model-router/src/types.ts) — `ToolParamSchema` extracted to support `items` для array-typed params (`add_import.names`)
+- [x] **+62 unit-тестов**: 5 для `WorkingSet.insertBefore`, 45 для structural-edits (happy paths + locator errors per tool), 12 dispatcher integration. **356/356 общая зелёная**
+
+**Live bench (rag-system-target):**
+
+| Task | v1.30.5 | **v1.31** |
+|---|---|---|
+| `/version` Coder | duplicate-content layout (balance OK, structurally messy) | **byte-perfect via single `add_route` call** ✓ |
+| `/version` wall | ~32 min | **~12 min** (3× faster) |
+| `/version` tool calls | ~25 line-coord rounds | **3 calls** (read + add_route + done) |
+| `getSize()` Coder | n/a | **byte-perfect inside MemoryQueue class via `add_method`** ✓ |
+| `getSize()` placement | (v1.30: OUTSIDE class) | **inside class by construction** |
+| Final commit | commit_skipped (output quality) | commit_skipped (Fixer regressed otherwise — see below); auto-branch mergeable |
+
+**Cumulative progression /version (8 iterations):**
+
+| Iteration | Coder did right | Coder did wrong |
+|---|---|---|
+| v1.29 | nothing | 5 search-not-found cascades |
+| v1.30 | server.ts surgical | scope creep (package.json wiped) |
+| v1.30.1 | scope OK | cargo-cult /health body |
+| v1.30.4 | content correct | structural placement (closing eaten) |
+| v1.30.5 | balance OK | duplicate-content (model includes context lines) |
+| **v1.31** | **byte-perfect via `add_route`** | (Coder layer solved; Fixer regressed separately) |
+
+**Sandbox results (5-file project):**
+
+- L1.1 (Add /health) — 1 fail / 1 pass на двух runs. На fail Coder placed /health в server.ts (which has 0 routes — `add_route` errors); fallback на replace_in_file outside usersRoutes plugin → Reviewer rejected 3 attempts → step failed. На pass clean `read_file → add_route → done` сразу landed correctly inside usersRoutes. **Variability в "model picks which file", не в structural tools themselves**
+- L2.1 (cross-file middleware) — completed + committed, но с **duplicate `await app.register(usersRoutes);`**. После `add_import` сдвинул line numbers, model вызвал `replace_in_file(start_line=6, end_line=6)` со stale coords из original `read_file`. Validation didn't catch (compiles, tests pass). **Mitigation landed mid-run:** SYSTEM_PROMPT now requires re-read after every mutation
+
+**What worked:**
+- **`add_route` decisively solved /version.** Three tool calls instead of 25; 12 min instead of 32; byte-perfect placement inside the buildServer's route block, instance name copied from existing routes
+- **`add_method` decisively solved getSize.** Method ends up INSIDE the class — this was a deterministic v1.30 failure (placed outside), now deterministic v1.31 success
+- **Structural tools обходят whole classes of placement bugs by construction:** off-by-one, consumed brace, duplicate-content, метод-outside-class, all impossible
+- **Wall times rolled back substantially.** Tool counts collapsed по всем successful tasks
+- **Scope discipline + brace-balance defenses переиспользованы чисто** через `executeStructuralEdit` helper — no regression на тех properties
+
+**What broke (smaller class — fundamentally more tractable):**
+- **File-anchor variance.** When task names a route без файла, model sometimes picks server.ts (no routes — add_route errors) instead of routes/users.ts. Past iterations были deterministic 10/10 на этом — v1.31 introduces variance because new prompt steers more aggressively toward structural tools. Mitigation: prompt iteration
+- **Fixer's `add_import(file, source)` без names** — model invokes the new tool but skips the `names` array, getting useless side-effect import. Pattern deterministic across /version + getSize (8 такие calls). **Fix landed:** Fixer SYSTEM_PROMPT explicit warning, awaits validation
+- **Line-shift bug в L2.1** (sandbox) — model called replace_in_file со stale coords после add_import shifted lines. **Fix landed:** SYSTEM_PROMPT (Coder + Fixer) explicit warning о need to re-read after mutation, awaits validation
+
+**Lessons:**
+1. Архитектурный shift decisively right call. Six iterations of whack-a-mole replaced by one structural iteration that solves Coder layer для file-anchored atomic tasks
+2. Variability moved from "edit correctness" to "file/argument selection" — fundamentally easier to address through prompt iteration
+3. Two prompt fixes landed mid-run (line-shift, Fixer add_import names) — direct responses to observed evidence; awaiting v1.31.1 validation
+4. v1.32 candidate: stricter Fixer scope policy (refuse edits outside Coder's scope unless explicitly named in error message)
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.31-structural-anchors.md](docs/benchmarks/runs/2026-04-30-v1.31-structural-anchors.md)
 
 #### v1.30.6 (опционально) — Duplicate-content detection (~2-3 часа)
 

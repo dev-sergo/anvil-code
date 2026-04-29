@@ -138,6 +138,58 @@ export class WorkingSet {
   }
 
   /**
+   * Insert `text` so that it appears immediately before line `line` (1-indexed).
+   * After the call, what was originally line `line` sits below the inserted
+   * content; preceding lines are unchanged.
+   *
+   * Newline semantics: a trailing `\n` in `text` is treated as the line
+   * terminator of the last inserted line, *not* as a request for an extra
+   * blank line. So `insertBefore(N, 'X\n')` inserts a single line containing
+   * "X", and `insertBefore(N, 'X\n\n')` inserts "X" then one blank line.
+   * `insertBefore(N, '')` is a no-op (inserts nothing) and returns ok.
+   *
+   * Why this is separate from `replace`: structural tools (add_method,
+   * add_route, etc.) want pure-insertion semantics where the cursor sits
+   * between two lines and new content is squeezed in. Encoding that as
+   * `replace(line, line, text + originalLine)` is awkward and loses error
+   * symmetry. `insertBefore` says what it does.
+   *
+   * Range: `1 <= line <= lines.length + 1`. Passing `lines.length + 1` appends
+   * after the last line.
+   */
+  insertBefore(relPath: string, line: number, text: string): WorkingSetResult {
+    const content = this.read(relPath);
+    if (content === null) {
+      return { ok: false, error: `file does not exist: ${relPath}` };
+    }
+    const lines = content.split('\n');
+    if (!Number.isInteger(line) || line < 1) {
+      return { ok: false, error: `line must be a positive integer, got ${line}` };
+    }
+    if (line > lines.length + 1) {
+      return {
+        ok: false,
+        error: `line ${line} out of range (file has ${lines.length} lines): ${relPath}`,
+      };
+    }
+
+    const before = lines.slice(0, line - 1);
+    const after = lines.slice(line - 1);
+    // Drop a trailing '\n' so it acts as the terminator of the last inserted
+    // line, not an extra empty line. '\n\n' still becomes one blank line.
+    const normalized = text.endsWith('\n') ? text.slice(0, -1) : text;
+    const insert = normalized === '' ? [] : normalized.split('\n');
+    const merged = [...before, ...insert, ...after].join('\n');
+
+    const prev = this.files.get(relPath)!;
+    this.files.set(relPath, {
+      content: merged,
+      action: prev.action === 'create' ? 'create' : 'modify',
+    });
+    return { ok: true };
+  }
+
+  /**
    * Replace the file's content wholesale, preserving the action label of the
    * existing entry. Used for undo: when a higher-level check rejects an edit
    * (e.g. brace-balance verification), the dispatcher calls overwriteRaw with
