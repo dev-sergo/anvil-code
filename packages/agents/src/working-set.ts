@@ -222,6 +222,23 @@ export class WorkingSet {
     return false;
   }
 
+  /**
+   * Has this file been opened (via `read` or any subsequent mutation) during
+   * the current loop? Used by the v1.32-a.1 read-grants-write policy: when
+   * the model explicitly reads a file, that's a deliberate "I want to know
+   * about this and possibly edit it" signal — the dispatcher uses it to
+   * dynamically expand write scope beyond the static `policy.allowed` set.
+   *
+   * Files that the model never touched (neither read nor wrote) return false.
+   * Files that were read-and-then-deleted via `delete_file` return false too —
+   * once deleted, they're out of scope for further writes.
+   */
+  hasOpened(relPath: string): boolean {
+    const entry = this.files.get(relPath);
+    if (!entry) return false;
+    return entry.action !== 'delete';
+  }
+
   private absPath(relPath: string): string {
     return path.join(this.projectRoot, relPath);
   }

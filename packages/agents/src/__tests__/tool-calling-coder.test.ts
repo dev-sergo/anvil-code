@@ -347,6 +347,205 @@ describe('dispatchToolCall', () => {
     });
   });
 
+  // v1.32-a.1 — read-grants-write. A file the model has explicitly read in
+  // this loop is granted write access. Surfaced by L4.1: Fixer correctly
+  // navigated to user-service.ts via read_file but couldn't write there.
+  describe('isWriteAllowed with read-grants-write (v1.32-a.1)', () => {
+    let tmpDir: string;
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iwa-rgw-'));
+    });
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function write(rel: string, content: string): void {
+      const abs = path.join(tmpDir, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content);
+    }
+
+    const policy: WritePolicy = {
+      allowed: new Set(['src/coder-output.ts']),
+      forbiddenPatterns: [/(?:^|\/)package\.json$/],
+    };
+
+    it('rejects an unread out-of-scope file', () => {
+      const ws = new WorkingSet(tmpDir);
+      const r = isWriteAllowed('src/elsewhere.ts', policy, ws);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/not opened via read_file/);
+    });
+
+    it('grants write after an explicit read_file in the same loop', () => {
+      write('src/elsewhere.ts', 'export const X = 1;\n');
+      const ws = new WorkingSet(tmpDir);
+      // Pre-condition: write rejected before read.
+      expect(isWriteAllowed('src/elsewhere.ts', policy, ws).ok).toBe(false);
+      // Read it (mimics what dispatchToolCall does on read_file).
+      ws.read('src/elsewhere.ts');
+      // Now writable.
+      expect(isWriteAllowed('src/elsewhere.ts', policy, ws).ok).toBe(true);
+    });
+
+    it('still blocks forbidden config files even after read_file (absolute ban)', () => {
+      write('package.json', '{}\n');
+      const ws = new WorkingSet(tmpDir);
+      ws.read('package.json');
+      const r = isWriteAllowed('package.json', policy, ws);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/protected configuration/);
+    });
+
+    it('keeps the static allowed set as the primary path (no read needed for it)', () => {
+      const ws = new WorkingSet(tmpDir);
+      // src/coder-output.ts is in policy.allowed; never read.
+      expect(isWriteAllowed('src/coder-output.ts', policy, ws).ok).toBe(true);
+    });
+
+    it('does not leak between independent WorkingSet instances', () => {
+      write('src/elsewhere.ts', 'x\n');
+      const ws1 = new WorkingSet(tmpDir);
+      const ws2 = new WorkingSet(tmpDir);
+      ws1.read('src/elsewhere.ts'); // ws1 has it opened, ws2 does not
+      expect(isWriteAllowed('src/elsewhere.ts', policy, ws1).ok).toBe(true);
+      expect(isWriteAllowed('src/elsewhere.ts', policy, ws2).ok).toBe(false);
+    });
+
+    it('a file opened then deleted in the same loop is not writable again', () => {
+      write('src/temp.ts', 'x\n');
+      const ws = new WorkingSet(tmpDir);
+      ws.read('src/temp.ts');
+      ws.delete('src/temp.ts');
+      // After delete, hasOpened returns false; subsequent write rejected.
+      expect(isWriteAllowed('src/temp.ts', policy, ws).ok).toBe(false);
+    });
+
+    it('back-compat: omitting `ws` falls back to static-policy behavior', () => {
+      // Pre-v1.32-a.1 callers (and unit tests) call isWriteAllowed(path, policy).
+      // The third arg is optional; without it, only the static rules apply.
+      const r = isWriteAllowed('src/elsewhere.ts', policy);
+      expect(r.ok).toBe(false);
+    });
+  });
+
+  // v1.32-a.1 dispatcher integration — read_file in the loop unlocks
+  // subsequent writes through the actual tool dispatcher (not just the
+  // unit-tested helper). This is the live behavior model relies on.
+  describe('dispatchToolCall — read-grants-write end-to-end (v1.32-a.1)', () => {
+    let tmpDir: string;
+    let ws: WorkingSet;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rgw-dispatch-'));
+      ws = new WorkingSet(tmpDir);
+    });
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function write(rel: string, content: string): void {
+      const abs = path.join(tmpDir, rel);
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, content);
+    }
+
+    it('replace_in_file on an out-of-scope file is rejected before read; succeeds after', () => {
+      write('src/services/user-service.ts', 'export const x = 1;\nexport const y = 2;\n');
+      const policy: WritePolicy = {
+        allowed: new Set(['src/routes/users.ts']),
+        forbiddenPatterns: [],
+      };
+
+      // Step 1: try to write before reading. Rejected.
+      const beforeRead = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: {
+              path: 'src/services/user-service.ts',
+              start_line: 1,
+              end_line: 1,
+              new_text: 'export const x = 99;',
+            },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(beforeRead.text).toMatch(/^error:/);
+      expect(beforeRead.text).toMatch(/not opened via read_file/);
+
+      // Step 2: read the file.
+      const readResult = dispatchToolCall(
+        {
+          function: { name: 'read_file', arguments: { path: 'src/services/user-service.ts' } },
+        },
+        ws,
+        policy,
+      );
+      expect(readResult.text.startsWith('# src/services/user-service.ts')).toBe(true);
+
+      // Step 3: write succeeds.
+      const afterRead = dispatchToolCall(
+        {
+          function: {
+            name: 'replace_in_file',
+            arguments: {
+              path: 'src/services/user-service.ts',
+              start_line: 1,
+              end_line: 1,
+              new_text: 'export const x = 99;',
+            },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(afterRead.text.startsWith('ok:')).toBe(true);
+      expect(ws.read('src/services/user-service.ts')).toContain('export const x = 99;');
+    });
+
+    it('add_method on a read file unlocks even when class is in a non-allowlisted module', () => {
+      // Specifically replays the L4.1 navigation pattern: bug is in a service
+      // module the Coder didn't touch; Fixer reads it, then edits via a
+      // structural tool (which goes through the same scope check).
+      write(
+        'src/services/user-service.ts',
+        'export class UserService {\n  list(): string[] {\n    return [];\n  }\n}\n',
+      );
+      const policy: WritePolicy = {
+        allowed: new Set(['src/routes/users.ts']),
+        forbiddenPatterns: [],
+      };
+
+      // Read first.
+      dispatchToolCall(
+        { function: { name: 'read_file', arguments: { path: 'src/services/user-service.ts' } } },
+        ws,
+        policy,
+      );
+
+      const r = dispatchToolCall(
+        {
+          function: {
+            name: 'add_method',
+            arguments: {
+              file: 'src/services/user-service.ts',
+              container: 'UserService',
+              source: 'getSize(): number { return this.list().length; }',
+            },
+          },
+        },
+        ws,
+        policy,
+      );
+      expect(r.text.startsWith('ok:')).toBe(true);
+      const updated = ws.read('src/services/user-service.ts')!;
+      expect(updated).toContain('getSize(): number');
+    });
+  });
+
   // v1.30.5 — verify-syntax (brace balance). Catches the structural-placement
   // failure mode from the v1.30.4 benchmark where replace_in_file consumed a
   // closing `});` without restoring it, leaving the file unbalanced. Dispatcher
@@ -937,5 +1136,59 @@ describe('dispatchToolCall — structural tools (v1.31)', () => {
 
     expect(r.text).toMatch(/^error:/);
     expect(r.text).toMatch(/requires a non-empty "file" argument/);
+  });
+});
+
+// v1.32-a.3 — Coder reliability: symmetric to Fixer's retry logic. The earlier
+// one-shot retry with "Or call done() if there is nothing to do" gave the
+// model an explicit bail option on hard tasks. New behavior: two retries
+// with stronger nudges; bail only after 3 consecutive text-only responses.
+describe('ToolCallingCoderAgent.execute — no-tool-calls retry (v1.32-a.3)', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-no-tools-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function buildFakeRouter(responses: Array<{ content: string; toolCalls?: unknown[] }>) {
+    let i = 0;
+    return {
+      routeWithTools: async () => {
+        const r = responses[Math.min(i, responses.length - 1)];
+        i++;
+        return { content: r.content, toolCalls: r.toolCalls, model: 'fake' };
+      },
+    } as never;
+  }
+
+  it('bails after 3 consecutive text-only responses', async () => {
+    const { ToolCallingCoderAgent } = await import('../tool-calling-coder.js');
+    const router = buildFakeRouter([
+      { content: 'I do not know how to do this.' },
+      { content: 'Still no.' },
+      { content: 'Genuinely stuck.' },
+    ]);
+    const agent = new ToolCallingCoderAgent(router);
+    const result = await agent.execute('add a /version endpoint', 'context', 'balanced', tmpDir);
+    expect(result.files).toEqual([]);
+  });
+
+  it('continues normally when a text-only response is followed by tool calls', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'src/foo.ts'), 'export const X = 1;\n');
+
+    const { ToolCallingCoderAgent } = await import('../tool-calling-coder.js');
+    const router = buildFakeRouter([
+      { content: 'thinking…' }, // text only — triggers nudge #1
+      { content: '', toolCalls: [{ function: { name: 'read_file', arguments: { path: 'src/foo.ts' } } }] },
+      { content: '', toolCalls: [{ function: { name: 'done', arguments: {} } }] },
+    ]);
+    const agent = new ToolCallingCoderAgent(router);
+    const result = await agent.execute('inspect src/foo.ts', 'context', 'balanced', tmpDir);
+    // Coder only read; no edits. Key property: the loop didn't bail at the
+    // first text-only response — the read_file in round 2 was reached.
+    expect(result.files).toEqual([]);
   });
 });

@@ -100,8 +100,14 @@ export interface WritePolicy {
   forbiddenPatterns: RegExp[];
 }
 
-export function isWriteAllowed(path: string, policy: WritePolicy): { ok: true } | { ok: false; reason: string } {
+export function isWriteAllowed(
+  path: string,
+  policy: WritePolicy,
+  ws?: WorkingSet,
+): { ok: true } | { ok: false; reason: string } {
   // Forbidden files override everything except an explicit task-description mention.
+  // Reading a forbidden file does NOT grant write access — the absolute-ban
+  // property is preserved so model can't sneak edits to package.json by reading it.
   for (const re of policy.forbiddenPatterns) {
     if (re.test(path) && !policy.allowed.has(path)) {
       return {
@@ -110,14 +116,21 @@ export function isWriteAllowed(path: string, policy: WritePolicy): { ok: true } 
       };
     }
   }
-  // Whitelist enforcement only when the task names at least one path.
-  if (policy.allowed.size > 0 && !policy.allowed.has(path)) {
-    return {
-      ok: false,
-      reason: `path "${path}" is not named in the task description — only [${[...policy.allowed].join(', ')}] are in scope. If you really need to touch this file, the operator must add it to the task.`,
-    };
-  }
-  return { ok: true };
+  // Permissive mode: no static allowlist enforcement, only forbidden patterns gate writes.
+  if (policy.allowed.size === 0) return { ok: true };
+  // Static allowlist hit.
+  if (policy.allowed.has(path)) return { ok: true };
+  // v1.32-a.1 dynamic scope: a file the model has explicitly read in the
+  // current loop is granted write access. The read is a deliberate gesture
+  // that says "I want to inspect this and possibly edit it." Forbidden
+  // patterns above already excluded; normal source files unlock cleanly.
+  if (ws?.hasOpened(path)) return { ok: true };
+  return {
+    ok: false,
+    reason:
+      `path "${path}" is not in scope: not named in the task and not opened via read_file in this loop. ` +
+      `Statically allowed: [${[...policy.allowed].join(', ')}]. To edit this file, call read_file("${path}") first — the dispatcher then grants write access for the rest of this loop.`,
+  };
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -390,9 +403,10 @@ Rules:
 - Test files are NOT your responsibility for production-code steps. The TesterAgent runs separately. Do not edit __tests__/ files unless the step explicitly says to.
 
 SCOPE DISCIPLINE:
-- Write only to paths the task description names. read_file is always free.
-- If the dispatcher rejects a write ("path X is not named in the task"), the path you tried isn't in scope — focus the change on a path that IS in scope, or proceed without that auxiliary edit. The user-message at the start lists "Allowed write targets" explicitly. Use those.
-- Don't touch project configuration (package.json, tsconfig.json, vitest config, lockfiles, .env) unless the task literally names them.
+- Write only to paths the task description names OR paths you have explicitly opened via read_file in this loop. read_file is always free, and a deliberate read grants write access for the rest of this loop ("read-grants-write" rule).
+- If the dispatcher rejects a write with "not in scope: not named in the task and not opened via read_file" — call read_file on that path first, then retry the write. The read is your declared intent to edit.
+- The user-message at the start lists "Allowed write targets" — those are the statically-allowed paths from the task. Anything else requires read_file first.
+- Don't touch project configuration (package.json, tsconfig.json, vitest config, lockfiles, .env) — these stay forbidden even after read_file. The "absolute ban" is non-negotiable.
 - You MUST complete the substantive change requested in the task. Calling done() without making any of the requested edits is wrong unless the task is genuinely a no-op.
 
 Output format: tool calls only. When you have completed the task, call done().`;
@@ -546,7 +560,7 @@ function executeStructuralEdit(
   if (!filePath) {
     return { text: `error: ${toolLabel} requires a non-empty "file" argument`, done: false };
   }
-  const allow = isWriteAllowed(filePath, policy);
+  const allow = isWriteAllowed(filePath, policy, ws);
   if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
 
   const content = ws.read(filePath);
@@ -619,7 +633,7 @@ export function dispatchToolCall(
       if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) {
         return { text: 'error: start_line and end_line must be integers', done: false };
       }
-      const allow = isWriteAllowed(filePath, policy);
+      const allow = isWriteAllowed(filePath, policy, ws);
       if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
 
       // v1.30.5 — capture pre-edit content + balance for syntax verification.
@@ -662,7 +676,7 @@ export function dispatchToolCall(
       const filePath = String(args.path ?? '');
       const content = typeof args.content === 'string' ? args.content : '';
       if (!filePath) return { text: 'error: create_file requires "path"', done: false };
-      const allow = isWriteAllowed(filePath, policy);
+      const allow = isWriteAllowed(filePath, policy, ws);
       if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
 
       // Same balance guard as replace_in_file — a brand-new TS/JS file should
@@ -687,7 +701,7 @@ export function dispatchToolCall(
     case 'delete_file': {
       const filePath = String(args.path ?? '');
       if (!filePath) return { text: 'error: delete_file requires "path"', done: false };
-      const allow = isWriteAllowed(filePath, policy);
+      const allow = isWriteAllowed(filePath, policy, ws);
       if (!allow.ok) return { text: `error: ${allow.reason}`, done: false };
       const r = ws.delete(filePath);
       if (!r.ok) return { text: `error: ${r.error}`, done: false };
@@ -815,6 +829,8 @@ export class ToolCallingCoderAgent {
     const ctx = currentTaskContext();
     let toolCallsExecuted = 0;
     let doneCalled = false;
+    // v1.32-a.3 — track consecutive text-only responses for retry-with-nudge.
+    let consecutiveNoToolCalls = 0;
     const emittedFilesByPath = new Set<string>();
 
     for (let round = 0; round < MAX_TOOL_CALLS && !doneCalled; round++) {
@@ -822,19 +838,26 @@ export class ToolCallingCoderAgent {
       const calls = response.toolCalls ?? [];
 
       if (calls.length === 0) {
-        // Model wrote prose instead of calling tools. Nudge once with an
-        // explicit reminder, otherwise treat as an early exit.
-        if (round === 0) {
-          messages.push({ role: 'assistant', content: response.content });
-          messages.push({
-            role: 'user',
-            content:
-              'You did not call any tool. To make changes you MUST call read_file/replace_in_file/create_file/delete_file. Call tools now, or call done() if there is nothing to do.',
-          });
-          continue;
+        // v1.32-a.3 — symmetric with Fixer: up to 2 retries with progressively
+        // stronger nudges. The earlier "or call done() if there is nothing to
+        // do" gave too easy an escape hatch; on hard tasks the model would
+        // produce a text-only response and bail without making any change.
+        consecutiveNoToolCalls++;
+        if (consecutiveNoToolCalls >= 3) {
+          logger.warn(
+            { agent: this.name },
+            'Tool-calling Coder emitted text-only response 3 times in a row; bailing',
+          );
+          break;
         }
-        break;
+        const nudge = consecutiveNoToolCalls === 1
+          ? `You responded with text but did not call any tool. Tools are the only way to make changes. Read the file the task references with read_file, then make the edit. Do that now — no preamble.`
+          : `Still no tool call. Tools execute changes; text does nothing. Call read_file on the file the task names, then a structural edit (add_route / add_method / add_import / etc.) or replace_in_file. If the task is genuinely a no-op, call done() — but only as a tool call.`;
+        messages.push({ role: 'assistant', content: response.content });
+        messages.push({ role: 'user', content: nudge });
+        continue;
       }
+      consecutiveNoToolCalls = 0;
 
       messages.push({ role: 'assistant', content: response.content, tool_calls: calls });
 

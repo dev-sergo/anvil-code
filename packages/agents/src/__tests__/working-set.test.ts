@@ -195,4 +195,51 @@ describe('WorkingSet', () => {
     expect(changes[0].action).toBe('create');
     if (changes[0].action === 'create') expect(changes[0].content).toBe('a\nMID\nb\n');
   });
+
+  // v1.32-a.1 — hasOpened gates the read-grants-write policy. Writing to a
+  // file the model hasn't opened in this loop is rejected; opening it via
+  // read_file (which calls ws.read internally) flips this true.
+  describe('hasOpened (v1.32-a.1 read-grants-write signal)', () => {
+    it('returns false for a file never accessed', () => {
+      const ws = new WorkingSet(tmpDir);
+      expect(ws.hasOpened('src/never-touched.ts')).toBe(false);
+    });
+
+    it('returns true after read', () => {
+      write('src/a.ts', 'content\n');
+      const ws = new WorkingSet(tmpDir);
+      ws.read('src/a.ts');
+      expect(ws.hasOpened('src/a.ts')).toBe(true);
+    });
+
+    it('returns true even when read returns null for a non-existent file', () => {
+      // read on a non-existent file does NOT add it to the cache (returns null
+      // without populating). hasOpened correctly reflects "not opened" then.
+      const ws = new WorkingSet(tmpDir);
+      ws.read('does-not-exist.ts');
+      expect(ws.hasOpened('does-not-exist.ts')).toBe(false);
+    });
+
+    it('returns true after replace (read happens transitively)', () => {
+      write('src/a.ts', 'one\n');
+      const ws = new WorkingSet(tmpDir);
+      ws.replace('src/a.ts', 1, 1, 'ONE');
+      expect(ws.hasOpened('src/a.ts')).toBe(true);
+    });
+
+    it('returns true after create (file is in the working set, action=create)', () => {
+      const ws = new WorkingSet(tmpDir);
+      ws.create('src/new.ts', 'content\n');
+      expect(ws.hasOpened('src/new.ts')).toBe(true);
+    });
+
+    it('returns false after delete (the file is gone from the WorkingSet semantics)', () => {
+      write('src/a.ts', 'content\n');
+      const ws = new WorkingSet(tmpDir);
+      ws.read('src/a.ts');
+      expect(ws.hasOpened('src/a.ts')).toBe(true);
+      ws.delete('src/a.ts');
+      expect(ws.hasOpened('src/a.ts')).toBe(false);
+    });
+  });
 });

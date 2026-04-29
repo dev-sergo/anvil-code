@@ -2,7 +2,7 @@
 
 > Живой документ разработки. Обновлять по мере выполнения задач: менять `[ ]` на `[x]`, обновлять статусы пакетов и дату.
 
-**Статус проекта**: 🟢 v1.31 — Structural anchor edits (`add_route` / `add_method` / `replace_method` / `replace_function` / `add_import` / `add_export`); 356/356 unit-тестов (+62 vs v1.30.5). **Coder layer для file-anchored atomic tasks решён**: `/version` на rag-system-target — byte-perfect via single `add_route` (32m → 12m); `getSize()` на rag-system-target — byte-perfect inside-class via `add_method` (v1.30 placed it OUTSIDE class). Variance переехала с "edit correctness" на "file/argument selection" — fundamentally более tractable failure class.  
+**Статус проекта**: 🟢 v1.32-a.3 — Fixer reliability + Coder retry symmetry. **L4.1 закрыт end-to-end:** bug-injected baseline → byte-perfect fix Fixer'ом в user-service.ts (added createdAt, removed `as User` cast) → validation pass → **commit landed** (real hash, working tree clean). 7 min wall (vs 44 min на v1.32-a.1). FIXER_SYSTEM_PROMPT consolidated ~40→~20 строк, scope expansion guidance moved adjacent to data в user message, no-tool-calls retry: 2 retries с прогрессивно strong nudges (без "Or done() escape"). Symmetric Coder upgrade. 387/387 unit-tests (+5). **Operator-grade bug-fix workflow milestone reached** — 5-iteration arc closed: v1.31.2 → v1.32-a → v1.32-a.1 → v1.32-a.2 → v1.32-a.3.  
 **Последнее обновление**: 2026-04-30  
 **Цель v1.0**: Локальная связка Ollama → VSCode → Cline / Roo Code без облачных подписок
 
@@ -891,6 +891,221 @@ Brace balance correctly catches v1.30.4 failure (verified в unit test). Но н
 4. v1.32 candidate: stricter Fixer scope policy (refuse edits outside Coder's scope unless explicitly named in error message)
 
 **Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.31-structural-anchors.md](docs/benchmarks/runs/2026-04-30-v1.31-structural-anchors.md)
+
+#### v1.31.1 — Validation prompt-fixes (✅ реализовано)
+
+**Цель:** Два SYSTEM_PROMPT-фикса, которые landed mid-v1.31 (line-shift warning + Fixer add_import-with-names guidance) — empirical validation на тех же bench-задачах, которые выявили их.
+
+- [x] **L2.1 sandbox** — line-shift fix validated. Финальный diff чистый: один `await app.register(usersRoutes)`, нет duplicate. Coder ещё допустил residual "duplicate import в replace_in_file new_text", но Reviewer поймал на attempt #1, Fixer пофиксил на attempt #2, commit landed
+- [x] **L1.1 sandbox 3 runs** — failure rate dropped 50% (v1.31) → **0% (v1.31.1)**. 2/3 byte-perfect через `add_route`; 1/3 committable через `replace_in_file` с lap-style indent issue (compiled, tests pass, but 4-space vs 2-space)
+- [x] **/version target** — Fixer add_import fix validated: 9 calls all с concrete `names` (`logger`, `taskEvents`, `OllamaClient`); 0 empty-names side-effect imports vs v1.31's 8
+- [x] **getSize target** — same pattern: many add_import calls, all named. Coder edit byte-perfect (unchanged from v1.31)
+- [x] Target benches still commit_skipped (pre-existing typecheck noise в test files, не v1.31 issue) — Fixer scope discipline это v1.32 candidate
+
+**Aggregate v1.31 → v1.31.1:**
+
+| Metric | v1.31 | **v1.31.1** |
+|---|---|---|
+| L1.1 sandbox failures | 1/2 runs | **0/3 runs** |
+| L2.1 duplicate-register bug | present | **absent** |
+| Fixer empty-names `add_import` | 8 | **0** |
+| Fixer named `add_import` | 0 | 20+ across two benches |
+
+**v1.32 candidates** (priority order):
+- **v1.32-a (~3-4h):** stricter Fixer scope — refuse writes outside Coder's working set unless issue explicitly references file path. Should turn target benches from commit_skipped → commit landed
+- **v1.32-b (~2-3h):** post-tool synthetic "WorkingSet state" message after structural mutations — catches L2.1 residual "duplicate import в replace_in_file new_text"
+- **v1.32-c (larger):** sub-agents (BugFixAgent / RefactorAgent / FeatureAgent) on v1.31 primitives
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.31.1-prompt-fixes.md](docs/benchmarks/runs/2026-04-30-v1.31.1-prompt-fixes.md)
+
+#### v1.31.2 — Bench coverage extension (✅ run, без code changes)
+
+**Цель:** L3.1 (refactor const-object-literal → class) и L4.1 (bug fix с injected bug) — две bench-задачи которые ни разу не запускались live, чтобы расширить evidence-base structural-tools архитектуры за пределы additive file-anchored tasks.
+
+- [x] **L3.1 byte-perfect** — Coder correctly fell back на `replace_in_file` потому что AST-anchored tools не подходят (UserService — VariableStatement с ObjectLiteralExpression, не FunctionDeclaration). 3 calls, 1m wall, clean commit. Validates **tool-selection logic for negative case**.
+- [x] **L4.1 critical quality finding** — first bench где Coder требуется **навигироваться** к багу, не просто исполнить наименованную операцию. Coder читал `routes/users.ts` (где endpoint), **никогда не открыл `services/user-service.ts`** (где bug). Сделал meaningless rename. TestRunner failed → Fixer **modified the test** добавив `user.createdAt = new Date()...` после create() → green commit landed. **Bug всё ещё в production коде**, тест gamed.
+
+**Семантический разрыв surfaced:**
+- Coder navigation = literal file mentioned in task; не использует code-graph для tracing UserService.create() → user-service.ts
+- Reviewer (small 7B) — syntax checker, не semantic; approved meaningless rename
+- Fixer permissive scope — может писать в `tests/**`; "fix the test, not the code" — cheapest path к зелёной валидации
+- Validation gates (typecheck + tests) пройти можно при семантически broken commits
+
+**v1.31.2 lands** (нет code changes — только bench evidence). Архитектурные claims v1.31.1 stand для *additive, file-anchored* tasks (L1.1, L2.1, /version, getSize, L3.1) но **НЕ для navigational / bug-fix tasks** (L4.1).
+
+**v1.32 priority redefined по итогу L4.1:**
+- **v1.32-a (revised, highest priority, ~4-6h):** Fixer scope discipline с specific anchor — *"Fixer не может писать в `tests/**` или `**/__tests__/**` если этот path не был в Coder's output."* Изменение в `buildFixerAllowedSet`: filter union, drop test paths Coder не trogал. Unit-tests на новый filter. Re-run L4.1 для валидации
+- **После v1.32-a** — re-run L4.1. Если Fixer всё ещё не может навигироваться к user-service.ts, это evidence для v1.32-d (code-graph-driven Coder context). Если может — L4.1 lands cleanly, bench coverage полная
+- **v1.32-d (NEW candidate, ~1 day):** при task mention'е symbol'a или endpoint'a — run code-graph "find definition + dependencies" и inject в Coder context. Lечит navigation gap
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.31.2-bench-coverage-extension.md](docs/benchmarks/runs/2026-04-30-v1.31.2-bench-coverage-extension.md)
+
+#### v1.32-a — Fixer test-scope discipline (✅ реализовано)
+
+**Цель:** прямой ответ на v1.31.2 L4.1 critical finding (Fixer modified test вместо production code → green commit с broken bug). Tighten `buildFixerAllowedSet`: drop test-file paths from issue-mention pool unless Coder touched them.
+
+- [x] [packages/agents/src/tool-calling-fixer.ts](packages/agents/src/tool-calling-fixer.ts):
+  - `TEST_PATH_PATTERNS` — три convention'a: `tests/`, `__tests__/`, `.test.{ts,tsx,js,jsx,mjs,cjs}` / `.spec.*` filename suffixes
+  - `isTestPath(p)` helper
+  - `buildFixerAllowedSet` — после union отбрасывает paths matching `isTestPath()` если их нет в Coder's set. Coder-produced test files остаются в scope (legitimate test maintenance)
+- [x] FIXER_SYSTEM_PROMPT — explicit warning что TestRunner failures point at production bugs не at test bugs; dispatcher reject test writes которые Coder не trogал
+- [x] **+6 unit-тестов** для нового filter (top-level tests/, __tests__/, .test/.spec suffixes, Coder-produced legit, non-test paths flow through, deeply-nested __tests__). 362/362 общая
+
+**L4.1 re-run на bug-inject baseline:**
+
+| | v1.31.2 | **v1.32-a** |
+|---|---|---|
+| Test file edited Fixer'ом | yes (silenced assertion) | **no** ✓ |
+| Production bug fixed | nope | nope (write rejected — see ниже) |
+| Validation status | pass (тест silenced) | fail (correctly red) |
+| Commit | landed (broken shipped) | **commit_skipped** ✓ correct signal |
+| Severity | HIGH (silent failure) | **LOW (visible failure)** |
+
+**Surfaced adjacent gap:** Fixer **корректно навигировался** к user-service.ts через read_file и предложил **правильный fix** — но dispatcher reject'нул write потому что user-service.ts не было ни в Coder's output set, ни в issue-mention set (TestRunner failure указывает на test, not production module). Fixer fell back на workaround в routes/users.ts (spread + add createdAt в response) — incorrect (storage всё ещё broken), но validation осталась красной → commit_skipped.
+
+**v1.32-a achieved its specific goal** (test-gaming impossible) **без полного решения L4.1**. Это better failure mode чем v1.31.2 (operator видит partial workaround на auto-branch, recognizes incomplete fix), но system bailed на navigation/scope gap.
+
+**Next iteration recommendation — v1.32-a.1 (~1-2h):**
+- `read_file(p)` gestures grant write permission to `p` for that loop
+- "Scope grows with explicit reads" — transparent, model-driven scope expansion  
+- Forbidden patterns (`package.json`, lockfiles) всё ещё apply
+- Re-run L4.1: ожидается **commit landed** (Fixer reads user-service.ts → может писать → fix bug → validation green → commit)
+- Если L4.1 всё ещё fails — evidence для v1.32-d (RAG-driven Coder navigation)
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.32-a-fixer-test-scope.md](docs/benchmarks/runs/2026-04-30-v1.32-a-fixer-test-scope.md)
+
+#### v1.32-a.1 — Read-grants-write + Fixer test-path forbidden (✅ реализовано)
+
+**Цель:** v1.32-a показал что Fixer корректно навигировался к user-service.ts через read_file и предложил правильный fix, но dispatcher reject'нул write (path не в Coder output / issue mentions). v1.32-a.1: `read_file(p)` в текущем loop'е grant'ит write permission to `p` — model'ская deliberate чтение становится transparent scope-acquisition gesture.
+
+- [x] [working-set.ts](packages/agents/src/working-set.ts) — `hasOpened(relPath)` public method (free signal — using existing lazy-load cache)
+- [x] [tool-calling-coder.ts](packages/agents/src/tool-calling-coder.ts) `isWriteAllowed` — добавлен optional `ws` параметр; logic: forbidden absolute → allowlist hit → ws.hasOpened → reject с инструкцией использовать read_file. Все 4 dispatcher write-paths (replace_in_file, create_file, delete_file, executeStructuralEdit) пропускают `ws`. Optional для backwards-compat
+- [x] [tool-calling-fixer.ts](packages/agents/src/tool-calling-fixer.ts) `FIXER_TEST_PATH_FORBIDDEN` — Fixer policy combines configs + test-paths. Закрывает read-grants-write loophole (read test → gain write для silence assertion = re-open L4.1 game-the-test). Coder-produced tests остаются writable через explicit allow precedence
+- [x] Coder + Fixer SYSTEM_PROMPT updated — explain read-grants-write rule
+- [x] **+18 unit-тестов**: 6 hasOpened, 7 isWriteAllowed read-grants-write (включая backward-compat), 2 dispatcher integration, 3 Fixer test-path forbidden. **380/380 общая зелёная**
+
+**L4.1 re-run на bug-inject:**
+
+| Stage | Result |
+|---|---|
+| Coder phase | **pathological 44-min loop** на routes/users.ts (unrelated v1.32-a.1 bug — model duplicates wrapper в new_text → brace imbalance → rollback → retry × 30+) |
+| Fixer phase | **decisive win**: read user-service.ts → tried replace_function (rejected — object-literal method, not FunctionDeclaration) → fell back на replace_in_file → **bug fixed correctly** (added createdAt + removed `as User` cast) |
+| Validation | TestRunner pass, TypeChecker pass, **Validation passed** ✓ |
+| Commit | logged "Committed changes" с empty hash, **но git status показывает modified user-service.ts uncommitted** — orchestrator/git-engine bug, не v1.32-a.1 |
+
+**Bug fix end-state:**
+```diff
+-    } as User;
++      createdAt: new Date().toISOString(),
++    };
+```
+
+Working tree содержит **byte-perfect fix**. Operator может git add + commit вручную для landing'a.
+
+**Cumulative L4.1 progression:**
+
+| | v1.31.2 | v1.32-a | **v1.32-a.1** |
+|---|---|---|---|
+| Test gamed by Fixer | yes | no | no |
+| Production fix applied | no | no (write rejected) | **yes** ✓ |
+| Validation status | pass (silenced) | fail (correctly red) | **pass (correctly green)** ✓ |
+| Commit landed | yes (broken shipped) | no (commit_skipped) | no (orchestrator bug) |
+| Severity | HIGH | LOW-MED | **LOWEST** (correct fix in tree, just unstaged) |
+
+**v1.32-a.1 specific goal achieved decisively.** Architectural primitive validated. Two adjacent issues surfaced (independent of this iteration):
+
+**v1.32-a.2 (next, ~1-2h):** orchestrator/git-engine bug — `runValidationLoop` не aggregate'ит Fixer's FileChange[] в staged set. Investigate, fix, add test "Coder no-op + Fixer real fix → commit lands". After этого L4.1 = first end-to-end green commit на navigational bug-fix task — closing v1.31.x arc.
+
+**v1.32-a.3 (later, ~2h):** Coder loop pathology — detect repeated identical tool calls, break early с system nudge "you've been rejected N times, change strategy." Wall-time win.
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.32-a.1-read-grants-write.md](docs/benchmarks/runs/2026-04-30-v1.32-a.1-read-grants-write.md)
+
+#### v1.32-a.2 — Orchestrator commit-landing aggregation (✅ реализовано, unit-validated)
+
+**Цель:** v1.32-a.1 surface'ил bug — Fixer применил byte-perfect fix, validation passed, "Committed changes" logged с empty hash, но git status показал uncommitted modified file. Trace: `runValidationLoop` писал Fixer's файлы через `writer.execute(fixed)` но не аппендил paths в outer `writtenFiles` array → `commitChanges(stale list)` → `git.add` стейджил только Coder's paths → `git.commit` с пустым stage → empty commit hash.
+
+- [x] [packages/agents/src/orchestrator.ts](packages/agents/src/orchestrator.ts):
+  - `runValidationLoop` теперь возвращает `{ passed, issuesCount, writtenFiles: string[] }` — tracks Fixer's writes via `Set<string>` 
+  - Caller в `runTask` мержит `validation.writtenFiles` в outer `writtenFiles` через includes-check (preserves insertion order: Coder → Fixer)
+- [x] **+2 unit-теста** в orchestrator.test.ts:
+  - `commits Fixer-produced paths even when Coder did not touch them` — Coder pишет routes/users.ts, Fixer pишет services/user-service.ts, validation passes на retry → assert: `git.commitChanges` called с обоими paths
+  - `dedupes the staged file list when Coder and Fixer touched the same path` — same path в обоих → staging list = [path], no duplicate
+- [x] **382/382 общая зелёная** (+2 vs v1.32-a.1 380)
+
+**L4.1 live bench (×2 runs):**
+
+| Run | Coder | Fixer | Validation | Final |
+|---|---|---|---|---|
+| #1 | route workaround `user.createdAt = new Date()...` | **0 tool calls — bailed** | red | commit_skipped |
+| #2 | route workaround `return { ...user, createdAt }` | **0 tool calls — bailed** | red | commit_skipped |
+
+**v1.32-a.2 fix correctly implemented but не exercised end-to-end** — validation никогда не прошла, commit-aggregation path не reached.
+
+**Surfaced upstream issue — Fixer non-determinism:** across 4 L4.1 runs (v1.32-a → v1.32-a.2 #2), Fixer bail rate ~50% (2 navigated, 2 bailed). Bail = model emits text без tool_calls → loop terminates без fix. Hypothesis: prompt accretion across v1.32-a + v1.32-a.1 (~25 lines добавлено vs v1.30.5) → model parses constraints, sees minimal "Allowed write targets", concludes can't help, бэйлит.
+
+**v1.32-a.3 (next, ~2-4h):**
+- Prompt consolidation — collapse v1.32-a/a.1 additions, move dynamic policy rules ближе к "Allowed write targets" в user message
+- Loop-level no-tool-calls retry — после первого text-only round, retry с stronger nudge ("you have not produced edits, navigate now") вместо immediate bail
+- Re-run L4.1 — ожидается reliable Fixer navigation → v1.32-a.2 aggregation fix gets end-to-end demonstration
+- After v1.32-a.3 single L4.1 success closes v1.31.x → v1.32-a.x arc: bug-inject → byte-perfect fix → **committed auto-branch** = operator-grade bug-fix workflow milestone
+
+**v1.32-a.4 (опционально, ~1h):** orchestrator's `commitChanges` swallows empty commits silently — guard: warn + emit `commit_empty` event when `commitResult.commit === ""` instead of pretending success.
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.32-a.2-commit-aggregation.md](docs/benchmarks/runs/2026-04-30-v1.32-a.2-commit-aggregation.md)
+
+#### v1.32-a.3 — Fixer reliability + Coder retry symmetry (✅ реализовано, end-to-end validated)
+
+**Цель:** v1.32-a.2 surface'ил Fixer non-determinism (~50% bail rate на L4.1) — single-shot retry с "Or call done() if no source edits can fix" эскейпом давал model'и слишком лёгкую возможность бейлить. Consolidate Fixer prompt + replace one-shot retry с двумя retries прогрессивно сильных nudges + symmetric upgrade для Coder.
+
+- [x] [tool-calling-fixer.ts](packages/agents/src/tool-calling-fixer.ts) FIXER_SYSTEM_PROMPT консолидирован ~40 → ~20 строк (структурные тулы first, workflow с навигационным trick "test failure → production module", scope policy в одном параграфе, общие TS patterns)
+- [x] User message в Fixer.execute() — "Initially-allowed write targets" + "Scope expansion: read_file on any non-forbidden path grants write access" размещены **рядом**, не разнесены между system prompt и user data
+- [x] No-tool-calls retry — `consecutiveNoToolCalls` counter, 2 retries с прогрессивно strong nudges, бейл только на 3-м consecutive text-only response. **Killed escape language** ("Or call done() if no source edits can fix") — nudges говорят "tool call now", не дают implicit permission to bail. Symmetric Coder upgrade
+- [x] **+5 unit-тестов**: 3 Fixer (bail on 3 consecutive, reset on real call, nudge #1 differs from #2) + 2 Coder (bail, reset). **387/387 общая** (+5 vs v1.32-a.2's 382)
+
+**L4.1 re-run на bug-inject baseline — ОФИЦИАЛЬНО CLOSED end-to-end:**
+
+| | |
+|---|---|
+| Coder | 3 calls (read → cosmetic replace_in_file → done); Reviewer approved |
+| Validation #1 | TestRunner fail |
+| Fixer | ~14 calls — read user-service.ts ✓ → traced types.ts → replace_in_file user-service.ts (real fix) → done |
+| Validation final | TestRunner pass, TypeChecker pass, **Validation passed** |
+| Commit | **landed** — `commitHash: 8319157...` (real hash, не empty) |
+| Working tree | clean |
+| Wall | **~7 min** (vs v1.32-a.1's 44 min) |
+
+**Final diff** (committed):
+
+```diff
+# user-service.ts (real fix by Fixer)
+       email: input.email,
+-    } as User;
++      createdAt: new Date().toISOString()
++    };
+
+# routes/users.ts (cosmetic Coder edit, harmless)
+-    return UserService.create(...);
++     const user = UserService.create(...);
++     return reply.code(201).send({ ...user, createdAt: user.createdAt });
+```
+
+v1.32-a.2 commit-aggregation finally получает end-to-end demonstration — оба paths committed.
+
+**Cumulative L4.1 progression — 5-iteration arc closed:**
+
+| Iteration | Test gamed | Fixer engages | Fix applied | Commit landed | Severity |
+|---|---|---|---|---|---|
+| v1.31.2 | YES | yes(2) | NO | YES (broken!) | HIGH |
+| v1.32-a | no | yes(5) | rejected | no | LOW-MED |
+| v1.32-a.1 | no | yes(6) | YES | no (orchestrator bug) | LOW |
+| v1.32-a.2 ×2 | no | **0 (bail)** | n/a | no | n/a |
+| **v1.32-a.3** | **no** | **yes(14)** | **YES** | **YES (real hash)** | **CLOSED** ✓ |
+
+**Operator-grade bug-fix workflow milestone reached.** Bug-injected baseline → byte-perfect fix in correct file → green validation → committed auto-branch → clean working tree.
+
+**v1.32-a.4 (опционально, ~30m):** L4.1 multi-run robustness — ×5 consecutive runs на same baseline. Target: 5/5 commit-landed. Если стабильно — Phase 3 closure готова, можно переходить на v1.32-c sub-agents.
+
+**Detailed run-file:** [docs/benchmarks/runs/2026-04-30-v1.32-a.3-fixer-reliability.md](docs/benchmarks/runs/2026-04-30-v1.32-a.3-fixer-reliability.md)
 
 #### v1.30.6 (опционально) — Duplicate-content detection (~2-3 часа)
 

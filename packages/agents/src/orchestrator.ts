@@ -206,6 +206,18 @@ export class Orchestrator {
       this.runValidationLoop(taskId, allFileChanges, mode, log),
     );
 
+    // v1.32-a.2: Fixer may have written paths during validation that weren't
+    // in Coder's output. Without merging them in, the commit step below stages
+    // only Coder's paths — which on bug-fix tasks (where Coder does nothing
+    // useful and Fixer does the real fix) leaves the actual change untracked.
+    // L4.1 v1.32-a.1 surfaced this: Validation passed, but `git.add(coderPaths)`
+    // staged nothing, `git.commit` produced no commit, the correct fix lived
+    // in the working tree as a dirty file. Dedupe so the staging list is
+    // unique even when Coder also touched a file Fixer later edited.
+    for (const p of validation.writtenFiles) {
+      if (!writtenFiles.includes(p)) writtenFiles.push(p);
+    }
+
     // 7. Commit — skip if validation failed and the strict flag is on.
     // Branch still exists for the operator to inspect; nothing is lost.
     const shouldSkipCommit = !validation.passed && config.git.commitOnlyIfValid;
@@ -636,9 +648,15 @@ export class Orchestrator {
     allFileChanges: FileChange[],
     mode: 'fast'|'balanced'|'deep',
     log: ReturnType<typeof taskLogger>,
-  ): Promise<{ passed: boolean; issuesCount: number }> {
+  ): Promise<{ passed: boolean; issuesCount: number; writtenFiles: string[] }> {
     const MAX_VALIDATION_RETRIES = 2;
     let attempt = 0;
+    // v1.32-a.2: track every path the Fixer successfully wrote during this
+    // loop, so the outer commit step stages them. Without this, `writtenFiles`
+    // in `runTask` only contained Coder's paths — Fixer's correct fix could
+    // pass validation, but `git.commit` would receive an empty/wrong file
+    // list and produce no commit (observed live on L4.1 v1.32-a.1).
+    const fixerWritten = new Set<string>();
 
     taskEvents.emitEvent({ taskId, type: 'validation_start', message: 'Running typecheck + tests' });
 
@@ -670,7 +688,7 @@ export class Orchestrator {
           message: 'Validation passed',
           data: { typeCheck: typeResult.skipped ?? 'passed', tests: testResult.skipped ?? 'passed' },
         });
-        return { passed: true, issuesCount: 0 };
+        return { passed: true, issuesCount: 0, writtenFiles: [...fixerWritten] };
       }
 
       if (attempt === MAX_VALIDATION_RETRIES) {
@@ -685,7 +703,7 @@ export class Orchestrator {
           message: `Validation failed after ${MAX_VALIDATION_RETRIES + 1} attempts`,
           data: { issueCount: issues.length, firstIssue: issues[0].slice(0, 200) },
         });
-        return { passed: false, issuesCount: issues.length };
+        return { passed: false, issuesCount: issues.length, writtenFiles: [...fixerWritten] };
       }
 
       attempt++;
@@ -725,6 +743,7 @@ export class Orchestrator {
       for (const fixed of dedupedFix) {
         try {
           this.writer.execute(fixed);
+          fixerWritten.add(fixed.path);
           const idx = allFileChanges.findIndex(f => f.path === fixed.path);
           if (idx >= 0) allFileChanges[idx] = fixed;
           else allFileChanges.push(fixed);
@@ -745,7 +764,7 @@ export class Orchestrator {
         consequences: `Invoked FixerAgent (attempt ${attempt}/${MAX_VALIDATION_RETRIES}).`,
       });
     }
-    return { passed: false, issuesCount: 0 };
+    return { passed: false, issuesCount: 0, writtenFiles: [...fixerWritten] };
   }
 }
 

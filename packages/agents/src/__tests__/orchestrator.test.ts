@@ -334,4 +334,103 @@ describe('Orchestrator per-step recovery', () => {
     const failureKeys = store.saveFailure.mock.calls.map(c => c[0] as string);
     expect(failureKeys.some(k => k.startsWith('validation-failure:'))).toBe(true);
   });
+
+  // v1.32-a.2 — when validation succeeds because the Fixer wrote a path that
+  // the Coder never touched (typical for navigational bug-fix tasks: Coder
+  // edits routes/users.ts cosmetically, Fixer reads & fixes services/user-service.ts),
+  // the commit must stage BOTH paths. Without the v1.32-a.2 aggregation, the
+  // commit step received only Coder's paths — `git.add(coderPaths)` staged
+  // nothing useful, `git.commit` produced no commit, and the Fixer's correct
+  // fix lived in the working tree as a dirty file. This test pins the bug
+  // shut: Fixer's writes are aggregated into the commit's file list.
+  it('commits Fixer-produced paths even when Coder did not touch them', async () => {
+    const { orch, store, git, writer } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'fix a bug', dependencies: [] }],
+    });
+
+    // Coder writes routes/users.ts. Fixer (later) writes services/user-service.ts —
+    // a path Coder never opened. Both writes succeed at SafeWriter.
+    (orch as unknown as { coder: { execute: ReturnType<typeof vi.fn> } }).coder = {
+      execute: vi.fn().mockResolvedValue({
+        files: [{ action: 'create', path: 'src/routes/users.ts', content: 'route' }],
+      }),
+    };
+
+    // First TypeChecker call fails; second (after Fixer) passes.
+    let typeCalls = 0;
+    (orch as unknown as { typeChecker: { run: ReturnType<typeof vi.fn> } }).typeChecker = {
+      run: vi.fn(async () => {
+        typeCalls++;
+        return typeCalls === 1
+          ? { success: false, output: 'AssertionError: expected user.createdAt to be truthy', exitCode: 1, durationMs: 5 }
+          : { success: true, output: '', exitCode: 0, durationMs: 5 };
+      }),
+    };
+    (orch as unknown as { testRunner: { run: ReturnType<typeof vi.fn> } }).testRunner = {
+      run: vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 5 }),
+    };
+
+    // Fixer's "fix" is on a different file than the Coder's output.
+    (orch as unknown as { fixer: { execute: ReturnType<typeof vi.fn> } }).fixer = {
+      execute: vi.fn().mockResolvedValue({
+        files: [{ action: 'create', path: 'src/services/user-service.ts', content: 'fixed' }],
+      }),
+    };
+
+    await expect(orch.runTask('task-32a2', 'fix the createdAt bug')).resolves.toBeUndefined();
+
+    // Validation eventually passed → commit fires.
+    expect(git.commitChanges).toHaveBeenCalledTimes(1);
+    const stagedFiles = git.commitChanges.mock.calls[0]![2] as string[];
+    // Both Coder's path AND Fixer's path are staged. v1.32-a.2 aggregation.
+    expect(stagedFiles).toContain('src/routes/users.ts');
+    expect(stagedFiles).toContain('src/services/user-service.ts');
+    // Both writer.execute paths fired (Coder's path on initial, Fixer's during validation loop).
+    const writtenPaths = writer.execute.mock.calls.map(c => (c[0] as { path: string }).path);
+    expect(writtenPaths).toContain('src/routes/users.ts');
+    expect(writtenPaths).toContain('src/services/user-service.ts');
+
+    expect(store.saveTask).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed' }));
+  });
+
+  // v1.32-a.2 — guard: if the same path appears in both Coder's output and the
+  // Fixer's output (Fixer touched the file Coder created/modified), the
+  // commit step must not double-stage it. Dedupe-by-existence.
+  it('dedupes the staged file list when Coder and Fixer touched the same path', async () => {
+    const { orch, git } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'tweak foo.ts', dependencies: [] }],
+    });
+
+    (orch as unknown as { coder: { execute: ReturnType<typeof vi.fn> } }).coder = {
+      execute: vi.fn().mockResolvedValue({
+        files: [{ action: 'create', path: 'src/foo.ts', content: 'initial' }],
+      }),
+    };
+
+    let typeCalls = 0;
+    (orch as unknown as { typeChecker: { run: ReturnType<typeof vi.fn> } }).typeChecker = {
+      run: vi.fn(async () => {
+        typeCalls++;
+        return typeCalls === 1
+          ? { success: false, output: 'TS2304', exitCode: 1, durationMs: 5 }
+          : { success: true, output: '', exitCode: 0, durationMs: 5 };
+      }),
+    };
+    (orch as unknown as { testRunner: { run: ReturnType<typeof vi.fn> } }).testRunner = {
+      run: vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 5 }),
+    };
+
+    // Fixer edits the SAME path Coder produced.
+    (orch as unknown as { fixer: { execute: ReturnType<typeof vi.fn> } }).fixer = {
+      execute: vi.fn().mockResolvedValue({
+        files: [{ action: 'create', path: 'src/foo.ts', content: 'fixed' }],
+      }),
+    };
+
+    await orch.runTask('task-32a2-dedup', 'task');
+
+    expect(git.commitChanges).toHaveBeenCalledTimes(1);
+    const stagedFiles = git.commitChanges.mock.calls[0]![2] as string[];
+    expect(stagedFiles).toEqual(['src/foo.ts']);
+  });
 });

@@ -67,45 +67,32 @@ export function pruneHistory(messages: ToolLoopMessage[]): boolean {
   return true;
 }
 
-const FIXER_SYSTEM_PROMPT = `You are a Code Fixer working through tools.
-Given a list of validation issues (typecheck or test failures) and the current set of files, make MINIMAL targeted edits to fix each issue.
+const FIXER_SYSTEM_PROMPT = `You are a Code Fixer. You make MINIMAL edits to fix listed validation issues. Only tool calls produce changes — text replies do nothing.
 
-YOU CANNOT WRITE A REPLY — only tool calls cause changes.
+TOOLS (use the structural tool whose contract matches the fix; fall back to replace_in_file only for non-source content or unusual code shapes):
+- read_file(path) — inspect a file (always free; opens write-scope on it for this loop)
+- add_import(file, source, names, default_name?, type_only?) — for "Cannot find name X". REQUIRES the names array; bare add_import(file, source) makes a useless side-effect import.
+- replace_method(file, container, name, source) — rewrite a class method body
+- replace_function(file, name, source) — rewrite a top-level function
+- add_method / add_route / add_export — introduce a new symbol
+- replace_in_file(path, start_line, end_line, new_text) — last-resort line edit
+- create_file / delete_file / done()
 
-STRUCTURAL TOOLS (PREFERRED — they fix issues by name, not by line):
-- add_import(file, source, names?, default_name?, type_only?) — for "Cannot find name X" / "Cannot find module" issues, this is usually the right tool. Idempotent.
-- replace_method(file, container, name, source) — for type mismatches inside a method, replace just the method.
-- replace_function(file, name, source) — for type mismatches in a top-level function.
-- add_method, add_route, add_export — when a missing symbol must be introduced.
+WORKFLOW:
+1. Pick an issue. It names a file (TS error: "src/foo.ts:42") or a test (test failure: "tests/users.test.ts > UserService > ..."). Open that file with read_file.
+2. If a test failed, the bug is almost always in the PRODUCTION module the test exercises — not in the test. Look at the test's import statements, read the production file, fix it there.
+3. Make the smallest edit that resolves the issue. ADDRESS ONLY LISTED ISSUES — don't refactor working code.
+4. Repeat for each issue, then call done().
 
-LINE-COORDINATE TOOLS (fallback):
-- read_file(path) — see actual bytes (mandatory before editing)
-- replace_in_file(path, start_line, end_line, new_text) — last resort, only when no structural tool fits (markdown, JSON, plain text, single-line classes, etc.)
-- create_file(path, content), delete_file(path), done()
+SCOPE: read_file on any non-forbidden path grants write access to that path for the rest of this loop. So the resolution path for "I want to edit X but it's not in my allowed list" is always: call read_file(X), then retry the edit. Forbidden paths (package.json, tsconfig, lockfiles, .env, vitest/jest config, .gitignore) are never writable. Test files (tests/, __tests__/, *.test.ts, *.spec.ts) are not writable unless the Coder produced them — find the production code instead.
 
-Workflow:
-1. Issues usually reference a file and line number ("src/foo.ts:42: TS2304: Cannot find name X"). Read that file with read_file before editing.
-2. Identify the SMALLEST possible fix. "Cannot find name X" → restore the missing import via add_import; do NOT delete the code that uses X. "Type Y is not assignable to Z" → fix the offending expression with replace_method or replace_in_file (whichever is narrower), not the whole function.
-3. Address one issue at a time. Prefer the structural tool when its contract matches.
-4. add_import requires SPECIFIC names. "add_import(file, source)" with no \`names\` array adds a useless side-effect import (\`import 'src';\`) that won't bring any symbol into scope. If you don't know what to import, read the original module first, OR use replace_in_file on the existing import line to add the right name.
-5. Once every issue is addressed, call done().
+COMMON TS PATTERNS:
+- "Cannot find name 'X'" → add_import the missing symbol. Don't delete the code that uses it.
+- "Type Y is not assignable to Z" → fix the offending expression, not the whole function.
+- Date arithmetic "left-hand side must be number" → \`d1.getTime() - d2.getTime()\`
+- "as jest.Mock" → \`as ReturnType<typeof vi.fn>\`; \`import { vi } from 'vitest'\`.
 
-Rules:
-- ADDRESS ONLY THE LISTED ISSUES. Do not rewrite working code, refactor, or "improve" things the issues don't mention.
-- TypeScript common patterns:
-  - "Cannot find name 'X'" → restore the import. \`import { X } from './path.js';\`
-  - "TS2362/TS2363 left-hand side of arithmetic must be number" on Date subtraction → use .getTime(). \`date1.getTime() - date2.getTime()\`.
-  - "Parameter 'x' implicitly has an 'any' type" → add an explicit type annotation.
-  - "Cannot find name 'jest'" or "as jest.Mock" → use vitest. \`as ReturnType<typeof vi.fn>\`. \`import { vi } from 'vitest';\`
-- Match Project Conventions: test framework, .js suffix in imports for NodeNext, strict mode.
-
-SCOPE DISCIPLINE:
-- Write only to paths the issues reference, or paths the Coder produced (the user message lists "Allowed write targets" explicitly).
-- Don't touch package.json, package-lock.json, tsconfig.json, vitest/jest config, .env, .gitignore, lockfiles. The dispatcher will reject such writes.
-- read_file is unrestricted.
-- If a write is rejected, focus on a different in-scope file. Do not bail by calling done() with no changes unless the issues genuinely don't need any source edits.
-
-Output format: tool calls only. When all listed issues are addressed, call done().`;
+Output: tool calls only. The first thing you call should be read_file on the file the first issue points at.`;
 
 const ALWAYS_FORBIDDEN_PATTERNS_LOCAL: RegExp[] = [
   /(?:^|\/)package\.json$/,
@@ -121,16 +108,75 @@ const ALWAYS_FORBIDDEN_PATTERNS_LOCAL: RegExp[] = [
 ];
 
 /**
+ * Test-file paths the Fixer is not trusted to write to unless the Coder
+ * already touched the same file. Surfaced by v1.31.2's L4.1 bench, where
+ * Fixer "fixed" a TestRunner failure by mutating the test (`user.createdAt
+ * = new Date()`) instead of fixing the production bug it asserted against.
+ * The cheapest path to a green assertion is to silence the assertion —
+ * which is precisely what we don't want.
+ *
+ * The patterns match how vitest/jest projects organize tests:
+ *   - `tests/foo.test.ts` (top-level tests/ dir)
+ *   - `packages/x/src/__tests__/foo.test.ts` (co-located __tests__)
+ *   - `src/foo.test.ts` (file-suffix convention)
+ *
+ * v1.32-a uses these for `buildFixerAllowedSet` filtering. v1.32-a.1
+ * additionally adds them to the Fixer policy's `forbiddenPatterns` so
+ * read-grants-write cannot bypass the test-scope discipline (read a test
+ * → edit the assertion to silence it). Coder-produced tests remain
+ * writable because explicit `policy.allowed.has(path)` wins over forbidden.
+ */
+const TEST_PATH_PATTERNS: RegExp[] = [
+  /(?:^|\/)tests\//,
+  /(?:^|\/)__tests__\//,
+  /\.test\.(?:ts|tsx|js|jsx|mjs|cjs)$/,
+  /\.spec\.(?:ts|tsx|js|jsx|mjs|cjs)$/,
+];
+
+/**
+ * Alias of TEST_PATH_PATTERNS used in the Fixer policy's `forbiddenPatterns`.
+ * Lives separate from TEST_PATH_PATTERNS purely for code readability — the
+ * declaration site for the filter (`isTestPath` below) reads naturally as
+ * "what counts as a test path"; the forbidden-list usage reads naturally as
+ * "the Fixer forbidden additions." Same regex set, different consumers.
+ */
+const FIXER_TEST_PATH_FORBIDDEN: RegExp[] = TEST_PATH_PATTERNS;
+
+function isTestPath(p: string): boolean {
+  return TEST_PATH_PATTERNS.some(re => re.test(p));
+}
+
+/**
  * Build the Fixer's allowed-write set: union of paths Coder produced AND
  * paths mentioned in any issue (typecheck errors quote `file.ts:42:`,
  * test failures quote test paths). Either source can legitimately need an
  * edit to fix the validation problem.
+ *
+ * v1.32-a discipline: test-file paths are dropped from the issue-mention
+ * pool unless the Coder also touched them. Rationale (L4.1): when a
+ * TestRunner failure mentions `tests/foo.test.ts`, the model can write
+ * either to the test (silence the assertion) or to the production code
+ * the assertion exercises. Without this filter, the cheapest LLM action
+ * is to mutate the test — which we observed live, with a green commit
+ * shipping a still-broken bug. The Coder genuinely needing a test edit
+ * always opens the test in its own loop first, so its files are still in
+ * the allowed set.
+ *
+ * Tradeoff: a real "Coder changed an API and tests need to follow but
+ * Coder didn't update them" scenario will now bail with commit_skipped
+ * instead of being papered over. We treat that as the correct signal —
+ * the Coder's work is incomplete, the operator needs to know.
  */
 export function buildFixerAllowedSet(currentFiles: FileChange[], issues: string[]): Set<string> {
-  const out = new Set<string>();
-  for (const f of currentFiles) out.add(f.path);
+  const coderPaths = new Set<string>();
+  for (const f of currentFiles) coderPaths.add(f.path);
+
+  const out = new Set<string>(coderPaths);
   for (const issue of issues) {
-    for (const p of extractAllowedPaths(issue)) out.add(p);
+    for (const p of extractAllowedPaths(issue)) {
+      if (isTestPath(p) && !coderPaths.has(p)) continue;
+      out.add(p);
+    }
   }
   return out;
 }
@@ -156,13 +202,19 @@ export class ToolCallingFixerAgent {
     const allowed = buildFixerAllowedSet(currentFiles, issues);
     const policy: WritePolicy = {
       allowed,
-      forbiddenPatterns: ALWAYS_FORBIDDEN_PATTERNS_LOCAL,
+      // Combine config-file forbidden list with test-file forbidden patterns.
+      // Test paths are forbidden so v1.32-a.1's read-grants-write rule cannot
+      // be used to bypass the v1.32-a test-scope discipline (read a test then
+      // edit its assertions to silence them — the L4.1 game-the-test pattern).
+      // A Coder-produced test stays writable because `policy.allowed.has(path)`
+      // takes precedence over the forbidden check.
+      forbiddenPatterns: [...ALWAYS_FORBIDDEN_PATTERNS_LOCAL, ...FIXER_TEST_PATH_FORBIDDEN],
     };
 
-    const allowedLine =
+    const initiallyAllowed =
       allowed.size > 0
-        ? `Allowed write targets (only these): ${[...allowed].join(', ')}`
-        : `Allowed write targets: any non-protected file (no specific paths derivable from issues)`;
+        ? [...allowed].join(', ')
+        : '(none derivable — read_file the file each issue points at, then edit it)';
 
     const issuesBlock = issues.map((iss, i) => `[issue ${i + 1}] ${iss}`).join('\n\n');
     const filesSummary = currentFiles
@@ -173,6 +225,10 @@ export class ToolCallingFixerAgent {
       })
       .join('\n');
 
+    // The user message lays out: issues → existing Coder files → write-scope
+    // (with the read_file expansion rule positioned NEXT to the initial allowed
+    // list so the model reads them as related, not as a static constraint
+    // followed by an abstract policy hidden in the system prompt) → context.
     const messages: ToolLoopMessage[] = [
       { role: 'system', content: FIXER_SYSTEM_PROMPT },
       {
@@ -180,32 +236,48 @@ export class ToolCallingFixerAgent {
         content:
           `Validation issues to fix:\n${issuesBlock}\n\n` +
           `Files the Coder already produced (current state on disk):\n${filesSummary || '(none)'}\n\n` +
-          `${allowedLine}\n\n` +
+          `Initially-allowed write targets: ${initiallyAllowed}\n` +
+          `Scope expansion: read_file on any non-forbidden path grants write access to it for this loop. ` +
+          `So if your fix needs to edit a file outside the initial list (e.g. a service module behind a failing test), call read_file on it first — then your edit will be allowed.\n\n` +
           `Project context:\n${context}\n\n` +
-          `Read each referenced file before editing. Make the minimal edit that addresses each issue. Call done() when every listed issue is fixed.`,
+          `Start by calling read_file on the file the first issue references. Make minimal edits. Call done() when every listed issue is fixed.`,
       },
     ];
 
     const ctx = currentTaskContext();
     let toolCallsExecuted = 0;
     let doneCalled = false;
+    // v1.32-a.3 — track consecutive text-only responses. Up to 2 retries with
+    // progressively stronger nudges before bailing. The previous one-shot retry
+    // ("Or call done() if no source edits can fix") gave the model an explicit
+    // permission to bail, which it took ~50% of the time on L4.1. The new
+    // nudges remove that escape and tell the model exactly what to call next.
+    let consecutiveNoToolCalls = 0;
 
     for (let round = 0; round < MAX_TOOL_CALLS && !doneCalled; round++) {
       const response = await this.router.routeWithTools(this.role, messages, TOOL_DEFINITIONS, taskMode);
       const calls = response.toolCalls ?? [];
 
       if (calls.length === 0) {
-        if (round === 0) {
-          messages.push({ role: 'assistant', content: response.content });
-          messages.push({
-            role: 'user',
-            content:
-              'You did not call any tool. Address each listed issue by reading the referenced file and applying replace_in_file. Or call done() if no source edits can fix these issues.',
-          });
-          continue;
+        consecutiveNoToolCalls++;
+        if (consecutiveNoToolCalls >= 3) {
+          // Two retries already issued without a single tool call — model is
+          // genuinely stuck. Break out; outer pipeline will surface
+          // commit_skipped with the issues unaddressed.
+          logger.warn(
+            { agent: this.name },
+            'Tool-calling Fixer emitted text-only response 3 times in a row; bailing',
+          );
+          break;
         }
-        break;
+        const nudge = consecutiveNoToolCalls === 1
+          ? `You responded with text but did not call any tool. Tools are how fixes happen. Pick the file the first issue references; call read_file on it; then edit. Do that now — no preamble.`
+          : `Still no tool call. The validation will not fix itself. The first listed issue points at a file path. Call read_file on that exact path RIGHT NOW. If you genuinely believe no source edit can fix the issues, call done() — but only as a tool call, not as text.`;
+        messages.push({ role: 'assistant', content: response.content });
+        messages.push({ role: 'user', content: nudge });
+        continue;
       }
+      consecutiveNoToolCalls = 0;
 
       messages.push({ role: 'assistant', content: response.content, tool_calls: calls });
 
