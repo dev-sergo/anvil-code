@@ -3,9 +3,29 @@ import crypto from 'crypto';
 import fs from 'fs';
 import { glob } from 'glob';
 import { config, logger, taskEvents } from '@rag-system/shared';
-import { OllamaClient } from '@rag-system/model-router';
+import { createEmbedBackend, effectiveEmbedModel } from '@rag-system/model-router';
+import type { ModelBackend } from '@rag-system/model-router';
 import { ASTParser, CodeGraph } from '@rag-system/code-graph';
 import { VectorStore } from './vector-store.js';
+
+/**
+ * v1.32-d — nomic-embed-text-v1.5 was trained with task-specific prefixes.
+ * Without them, similarity scores degrade by ~5-10%. The prefix is a property
+ * of the MODEL, not the backend, so we wire it here at the rag-system call
+ * sites — both Ollama and llama-swap paths benefit transparently.
+ *
+ * - `search_query: <text>` for retrieval-time embedding (the user's query)
+ * - `search_document: <text>` for index-time embedding (the corpus symbols)
+ *
+ * Cache keys factor in the mode so the same raw text embedded as a query and
+ * as a document don't collide — they're SEMANTICALLY different vectors.
+ */
+type EmbedMode = 'query' | 'document';
+
+const EMBED_PREFIX: Record<EmbedMode, string> = {
+  query: 'search_query: ',
+  document: 'search_document: ',
+};
 
 export interface ContextItem {
   symbolName: string;
@@ -26,30 +46,39 @@ interface RetrieverStore {
 export class GraphRetriever {
   private vectorStore: VectorStore;
   private codeGraph: CodeGraph;
-  private ollamaClient: OllamaClient;
+  private embedClient: ModelBackend;
+  private embedModelLabel: string;
   private parser: ASTParser;
   private store: RetrieverStore | null = null;
-  // Global semaphore — caps concurrent Ollama embed network calls across all
-  // in-flight files & symbols. Cache hits don't acquire it.
+  // Global semaphore — caps concurrent embed network calls (Ollama or
+  // llama-swap, depending on backend) across all in-flight files & symbols.
+  // Cache hits don't acquire it.
   private embedSemaphore: Semaphore;
 
   constructor(store?: RetrieverStore, paths?: { vectorsDir?: string; graphsDir?: string }) {
     this.vectorStore = new VectorStore(paths?.vectorsDir);
     this.codeGraph = new CodeGraph(paths?.graphsDir);
-    this.ollamaClient = new OllamaClient();
+    this.embedClient = createEmbedBackend();
+    this.embedModelLabel = effectiveEmbedModel();
     this.parser = new ASTParser();
     this.store = store ?? null;
     this.embedSemaphore = new Semaphore(config.rag.embedConcurrency);
   }
 
-  private async embedWithCache(text: string): Promise<number[]> {
+  private async embedWithCache(text: string, mode: EmbedMode): Promise<number[]> {
+    const prefixed = EMBED_PREFIX[mode] + text;
     if (!this.store) {
-      return this.embedSemaphore.run(() => this.ollamaClient.embed(text));
+      return this.embedSemaphore.run(() => this.embedClient.embed(prefixed));
     }
-    const key = crypto.createHash('sha1').update(`${config.ollama.embedModel}:${text}`).digest('hex');
+    // Cache key includes both the model label and the mode so query/doc
+    // embeddings of identical text don't collide, and an Ollama-built cache
+    // doesn't get reused after switching to llama-swap.
+    const key = crypto.createHash('sha1')
+      .update(`${this.embedModelLabel}:${mode}:${text}`)
+      .digest('hex');
     const cached = this.store.getCachedEmbedding(key);
     if (cached) return cached;
-    const vector = await this.embedSemaphore.run(() => this.ollamaClient.embed(text));
+    const vector = await this.embedSemaphore.run(() => this.embedClient.embed(prefixed));
     this.store.saveCachedEmbedding(key, vector);
     return vector;
   }
@@ -74,7 +103,7 @@ export class GraphRetriever {
 
     let queryVector: number[];
     try {
-      queryVector = await this.embedWithCache(query);
+      queryVector = await this.embedWithCache(query, 'query');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.debug({ error: msg }, 'Embedding unavailable, skipping RAG context');
@@ -144,10 +173,10 @@ export class GraphRetriever {
     await Promise.all(symbols.map(async (symbol) => {
       const text = `${symbol.kind} ${symbol.name}: ${symbol.text}`;
       try {
-        const vector = await this.embedWithCache(text);
+        const vector = await this.embedWithCache(text, 'document');
         await this.vectorStore.add(symbol.name, vector, { filePath, kind: symbol.kind });
       } catch {
-        // Ollama unavailable — skip embedding, code graph still populated
+        // Embed backend unavailable — skip vector, code graph still populated
       }
     }));
   }

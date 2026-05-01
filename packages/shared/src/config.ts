@@ -14,11 +14,28 @@ function envBool(key: string, fallback: boolean): boolean {
 }
 
 export const config = {
+  // v1.32-d — backend selector. 'ollama' keeps the legacy /api/chat path;
+  // 'llamacpp' routes through llama-swap (OpenAI-compatible /v1/chat/completions).
+  // Default stays 'ollama' until v1.32-d bench validates llamacpp end-to-end;
+  // flipped to 'llamacpp' in Phase F.
+  llmBackend: env('LLM_BACKEND', 'ollama') as 'ollama' | 'llamacpp',
+  // Optional override: if unset, embed uses the same backend as llmBackend.
+  // Set to 'ollama' for hybrid mode (chat→llamacpp, embed→ollama).
+  embedBackend: env('EMBED_BACKEND', '') as '' | 'ollama' | 'llamacpp',
   ollama: {
     baseUrl: env('OLLAMA_BASE_URL', 'http://127.0.0.1:11434'),
     modelLarge: env('OLLAMA_MODEL_LARGE', 'deepseek-coder-v2:16b'),
     modelSmall: env('OLLAMA_MODEL_SMALL', 'qwen2.5-coder:7b'),
     embedModel: env('OLLAMA_EMBED_MODEL', 'nomic-embed-text'),
+  },
+  llamacpp: {
+    // Single llama-swap endpoint; per-role models routed via the `model` field
+    // of /v1/chat/completions (llama-swap auto-loads/unloads models in VRAM).
+    url: env('LLM_URL', 'http://localhost:8080'),
+    modelLarge: env('LLM_LARGE_MODEL', 'coder'),
+    modelLargeLong: env('LLM_LARGE_LONG_MODEL', 'qwen-coder-long'),
+    modelSmall: env('LLM_SMALL_MODEL', 'qwen3'),
+    modelEmbed: env('LLM_EMBED_MODEL', 'embed'),
   },
   api: {
     port: envInt('API_PORT', 3000),
@@ -84,10 +101,22 @@ export const config = {
 export function validateConfig(): void {
   const errors: string[] = [];
 
+  if (config.llmBackend !== 'ollama' && config.llmBackend !== 'llamacpp') {
+    errors.push(`llmBackend: "${config.llmBackend}" must be "ollama" or "llamacpp"`);
+  }
+  if (config.embedBackend !== '' && config.embedBackend !== 'ollama' && config.embedBackend !== 'llamacpp') {
+    errors.push(`embedBackend: "${config.embedBackend}" must be "", "ollama" or "llamacpp"`);
+  }
+
   try {
     new URL(config.ollama.baseUrl);
   } catch {
     errors.push(`ollama.baseUrl: "${config.ollama.baseUrl}" is not a valid URL`);
+  }
+  try {
+    new URL(config.llamacpp.url);
+  } catch {
+    errors.push(`llamacpp.url: "${config.llamacpp.url}" is not a valid URL`);
   }
 
   if (!Number.isInteger(config.api.port) || config.api.port < 1 || config.api.port > 65535) {

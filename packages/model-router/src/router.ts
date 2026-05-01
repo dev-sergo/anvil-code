@@ -1,6 +1,5 @@
 import { config } from '@rag-system/shared';
 import type { ModelRole } from '@rag-system/shared';
-import { OllamaClient } from './ollama-client.js';
 import type {
   RouteRequest,
   RouteResponse,
@@ -9,7 +8,14 @@ import type {
   ToolLoopMessage,
   GenerateOptions,
 } from './types.js';
+import type { ModelBackend } from './backend.js';
+import { createChatBackend } from './backend.js';
 
+/**
+ * Role → size class. Drives default model selection in `selectModel`. taskMode
+ * 'fast' / 'deep' overrides this. Same mapping for both backends — sizes are
+ * conceptual, not bound to a specific model name.
+ */
 const ROLE_SIZE: Record<ModelRole, 'small' | 'large'> = {
   planner: 'small',
   reviewer: 'small',
@@ -20,14 +26,24 @@ const ROLE_SIZE: Record<ModelRole, 'small' | 'large'> = {
 };
 
 export class ModelRouter {
-  private client: OllamaClient;
+  private client: ModelBackend;
   private modelLarge: string;
   private modelSmall: string;
 
-  constructor(client?: OllamaClient) {
-    this.client = client ?? new OllamaClient();
-    this.modelLarge = config.ollama.modelLarge;
-    this.modelSmall = config.ollama.modelSmall;
+  /**
+   * Construct with an explicit backend (used in tests) or rely on the env-driven
+   * factory. Model name selection always follows `config.llmBackend` — passing a
+   * client only overrides the transport, not the model namespace.
+   */
+  constructor(client?: ModelBackend) {
+    this.client = client ?? createChatBackend();
+    if (config.llmBackend === 'llamacpp') {
+      this.modelLarge = config.llamacpp.modelLarge;
+      this.modelSmall = config.llamacpp.modelSmall;
+    } else {
+      this.modelLarge = config.ollama.modelLarge;
+      this.modelSmall = config.ollama.modelSmall;
+    }
   }
 
   private selectModel(role: ModelRole, taskMode?: string): string {
