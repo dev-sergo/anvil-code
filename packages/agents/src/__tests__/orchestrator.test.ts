@@ -23,6 +23,10 @@ vi.mock('@rag-system/safe-exec', () => ({
   },
   TestRunner: class { run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' }); },
   TypeChecker: class { run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' }); },
+  PrettierRunner: class {
+    run = vi.fn().mockResolvedValue({ success: true, formatted: [], output: '', durationMs: 0, skipped: 'mock' });
+  },
+  isPrettierConfigured: vi.fn(() => false),
   applyEdits: vi.fn((content: string) => ({ ok: true, result: content, tolerantEdits: [] })),
 }));
 

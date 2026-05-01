@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ModelRouter } from '@rag-system/model-router';
 import { GraphRetriever } from '@rag-system/rag';
-import { SafeWriter, TestRunner, TypeChecker, applyEdits } from '@rag-system/safe-exec';
+import { SafeWriter, TestRunner, TypeChecker, PrettierRunner, applyEdits } from '@rag-system/safe-exec';
 import { MemoryStore } from '@rag-system/memory';
 import { GitEngine } from '@rag-system/git-engine';
 import { buildRepoMap } from '@rag-system/code-graph';
@@ -37,6 +37,7 @@ export class Orchestrator {
   private toolCallingFixer: ToolCallingFixerAgent;
   private typeChecker: TypeChecker;
   private testRunner: TestRunner;
+  private prettier: PrettierRunner;
   private conventions: ProjectConventions | null = null;
 
   constructor(
@@ -58,6 +59,7 @@ export class Orchestrator {
     // multi-project setups check the right codebase.
     this.typeChecker = new TypeChecker(this.writer.root);
     this.testRunner = new TestRunner(this.writer.root);
+    this.prettier = new PrettierRunner(this.writer.root);
   }
 
   private getConventions(): ProjectConventions {
@@ -222,6 +224,24 @@ export class Orchestrator {
     // Branch still exists for the operator to inspect; nothing is lost.
     const shouldSkipCommit = !validation.passed && config.git.commitOnlyIfValid;
     if (writtenFiles.length > 0 && !shouldSkipCommit) {
+      // v1.32-a.6 — prettier post-step. Cosmetics-only: collapses style
+      // variance (indent depth, trailing commas, blank lines) so diffs become
+      // byte-perfect when the project has prettier configured. Never fails
+      // the commit — a prettier crash logs and the original Coder/Fixer
+      // output gets committed as-is.
+      const prettierResult = await this.prettier.run(writtenFiles);
+      if (!prettierResult.success) {
+        log.warn(
+          { output: prettierResult.output.slice(-200) },
+          'Prettier exited non-zero; committing un-formatted output',
+        );
+      } else if (prettierResult.formatted.length > 0) {
+        log.info(
+          { count: prettierResult.formatted.length, durationMs: prettierResult.durationMs },
+          'Prettier formatted files before commit',
+        );
+      }
+
       await this.git.commitChanges(taskId, `Complete task: ${description.substring(0, 50)}`, writtenFiles);
       taskEvents.emitEvent({
         taskId,
