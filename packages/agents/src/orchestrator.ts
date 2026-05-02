@@ -6,14 +6,15 @@ import { SafeWriter, TestRunner, TypeChecker, PrettierRunner, applyEdits } from 
 import { MemoryStore } from '@rag-system/memory';
 import { GitEngine } from '@rag-system/git-engine';
 import { buildRepoMap } from '@rag-system/code-graph';
-import { PlannerAgent } from './planner.js';
+import { PlannerAgent, inferStepKind, type PlanStep } from './planner.js';
 import { CoderAgent } from './coder.js';
-import { ToolCallingCoderAgent } from './tool-calling-coder.js';
-import { ToolCallingFixerAgent } from './tool-calling-fixer.js';
 import { ArchitectAgent } from './architect.js';
 import { TesterAgent } from './tester.js';
 import { ReviewerAgent } from './reviewer.js';
 import { FixerAgent } from './fixer.js';
+import { runTaskAgent } from './task-agents/runner.js';
+import { pickSpec } from './task-agents/registry.js';
+import { BUGFIX_SPEC } from './task-agents/bugfix.js';
 import { partialFileSize, type PartialFile } from './partial-json.js';
 import {
   FileChange,
@@ -30,11 +31,9 @@ export class Orchestrator {
   private planner: PlannerAgent;
   private architect: ArchitectAgent;
   private coder: CoderAgent;
-  private toolCallingCoder: ToolCallingCoderAgent;
   private tester: TesterAgent;
   private reviewer: ReviewerAgent;
   private fixer: FixerAgent;
-  private toolCallingFixer: ToolCallingFixerAgent;
   private typeChecker: TypeChecker;
   private testRunner: TestRunner;
   private prettier: PrettierRunner;
@@ -50,11 +49,9 @@ export class Orchestrator {
     this.planner = new PlannerAgent(router);
     this.architect = new ArchitectAgent(router);
     this.coder = new CoderAgent(router);
-    this.toolCallingCoder = new ToolCallingCoderAgent(router);
     this.tester = new TesterAgent(router);
     this.reviewer = new ReviewerAgent(router);
     this.fixer = new FixerAgent(router);
-    this.toolCallingFixer = new ToolCallingFixerAgent(router);
     // Validators run against the project root the writer is bound to so
     // multi-project setups check the right codebase.
     this.typeChecker = new TypeChecker(this.writer.root);
@@ -335,7 +332,7 @@ export class Orchestrator {
     const isReady = (s: { dependencies: string[] }): boolean =>
       s.dependencies.every(d => completedSteps.has(d) || failedSteps.has(d));
 
-    const launch = (step: { id: string; description: string; dependencies: string[] }) => {
+    const launch = (step: { id: string; description: string; dependencies: string[]; kind?: PlanStep['kind'] }) => {
       remaining.delete(step.id);
 
       const blockedBy = step.dependencies.filter(d => failedSteps.has(d));
@@ -452,11 +449,23 @@ export class Orchestrator {
 
   private async executeStep(
     taskId: string,
-    step: { id: string; description: string; dependencies: string[] },
+    step: { id: string; description: string; dependencies: string[]; kind?: PlanStep['kind'] },
     mode: 'fast'|'balanced'|'deep',
     log: ReturnType<typeof taskLogger>,
     previousChanges: FileChange[] = [],
   ): Promise<FileChange[]> {
+    // v1.32-c: log a warning when the heuristic disagrees with the Planner's
+    // step.kind. We don't override (Planner is the source of truth) — the warn
+    // surfaces a suspicious classification to the operator. Matches design
+    // rev2 §2.3.
+    const stepKind: PlanStep['kind'] = step.kind ?? 'feature';
+    const inferredKind = inferStepKind(step.description);
+    if (inferredKind !== stepKind) {
+      log.warn(
+        { stepId: step.id, planned: stepKind, inferred: inferredKind, desc: step.description.slice(0, 120) },
+        'Planner step.kind disagrees with heuristic — review classification',
+      );
+    }
     const conventions = this.getConventions();
     const items = await this.retriever.retrieveContextItems(step.description);
     const ragSnippets = items
@@ -488,11 +497,17 @@ export class Orchestrator {
     // once per step from the live graph snapshot.
     const repoMap = this.renderRepoMap(newlySources.map(s => s.path));
 
-    const design = await this.architect.execute(
-      step.description,
-      buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources, repoMap }),
-      mode,
-    );
+    // v1.32-c: skip Architect for refactor kinds. The transformation IS the
+    // design — running ArchitectAgent adds latency without value when the
+    // task is "rename X to Y" / "extract function W". Feature and bugfix
+    // kinds keep the Architect pre-pass.
+    const design = stepKind === 'refactor'
+      ? { design: '' }
+      : await this.architect.execute(
+          step.description,
+          buildPromptContext({ conventions, ragSnippets, ragFilePaths: [], projectRoot: this.writer.root, newlySources, repoMap }),
+          mode,
+        );
 
     const promptContext = buildPromptContext({
       conventions,
@@ -531,12 +546,25 @@ export class Orchestrator {
     // WorkingSet. When false (default), the patch-based Coder runs the existing
     // streaming JSON path. Same return shape (CoderOutput) — downstream pipeline
     // (Reviewer, write phase, validation) is unchanged.
+    //
+    // v1.32-c: tool-calling path dispatches to a kind-specific spec via
+    // runTaskAgent. Default kind=feature gives behavior identical to the
+    // previous ToolCallingCoderAgent (AC6 regression guard).
     const codeChanges = config.agents.toolCallingCoder
-      ? await this.toolCallingCoder.execute(step.description, promptContext, mode, this.writer.root, onCoderFile)
+      ? await runTaskAgent(
+          pickSpec(stepKind),
+          { stepDescription: step.description, context: promptContext, taskMode: mode },
+          this.router,
+          this.writer.root,
+        )
       : await this.coder.execute(step.description, promptContext, mode, onCoderFile);
+    void onCoderFile;
 
     let currentChanges: FileChange[] = [...codeChanges.files];
-    if (config.agents.testerEnabled) {
+    // v1.32-c: skip Tester for refactor kinds. Refactor preserves behavior
+    // — existing tests are the regression gate; generating new ones is wasted
+    // work and risks regression-test drift.
+    if (config.agents.testerEnabled && stepKind !== 'refactor') {
       try {
         const testChanges = await this.tester.execute(codeChanges.files, reviewContext, mode);
         currentChanges.push(...testChanges.testFiles);
@@ -754,8 +782,17 @@ export class Orchestrator {
       // where that import doesn't exist anywhere → search-not-found cascade).
       // Tool-calling Fixer reads the actual file via read_file and edits by
       // line range, eliminating the failure mode end-to-end.
+      //
+      // v1.32-c: validation Fixer always uses BUGFIX_SPEC regardless of the
+      // original step.kind — "test failure → fix the bug" is bugfix workflow.
       const fixResult = config.agents.toolCallingCoder
-        ? await this.toolCallingFixer.execute(issues, allFileChanges, validationContext, mode, this.writer.root)
+        ? await runTaskAgent(
+            BUGFIX_SPEC,
+            { stepDescription: '<validation>', context: validationContext, taskMode: mode,
+              issues, currentFiles: allFileChanges },
+            this.router,
+            this.writer.root,
+          )
         : await this.fixer.execute(issues, allFileChanges, validationContext, mode);
 
       // Re-write fixed files and update tracking. Dedupe so the Fixer's

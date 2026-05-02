@@ -6,6 +6,9 @@ export const PlanStepSchema = z.object({
   id: z.string(),
   description: z.string(),
   dependencies: z.array(z.string()).default([]),
+  // v1.32-c: drives task-agent dispatch in orchestrator. Defaults to 'feature'
+  // for backwards compat — old planner outputs and fixtures parse cleanly.
+  kind: z.enum(['feature', 'bugfix', 'refactor']).default('feature'),
 });
 
 export const PlanOutputSchema = z.object({
@@ -14,6 +17,22 @@ export const PlanOutputSchema = z.object({
 
 export type PlanStep = z.infer<typeof PlanStepSchema>;
 export type PlanOutput = z.infer<typeof PlanOutputSchema>;
+
+/**
+ * Heuristic kind classifier used as a sanity check on Planner LLM output —
+ * the orchestrator logs a warn when the heuristic disagrees with `step.kind`,
+ * but does NOT override (Planner is the source of truth). Operator-visible
+ * signal that the classification is suspicious. Per design rev2 §2.3: the
+ * naive regex misclassifies edge cases like "fix the routing config to add
+ * an endpoint", so silent override would do more harm than the diagnostic
+ * warning.
+ */
+export function inferStepKind(description: string): PlanStep['kind'] {
+  const d = description.toLowerCase();
+  if (/\b(fix|bug|broken|fails?|failing|incorrect|wrong|forgets?|missing)\b/.test(d)) return 'bugfix';
+  if (/\b(refactor|rename|extract|convert|migrate|reorganize|restructure)\b/.test(d)) return 'refactor';
+  return 'feature';
+}
 
 export class PlannerAgent extends BaseAgent {
   name = 'Planner';
@@ -52,6 +71,15 @@ Rules — STEP COUNT IS THE MOST IMPORTANT:
     the import statement (import fooPlugin from ./middleware/foo.js) plus the call
     fooPlugin(app) after the Fastify init. Preserve all existing imports, registrations,
     and the listen call."
+7. EACH STEP HAS A "kind" FIELD: "feature" | "bugfix" | "refactor". Default "feature".
+   - "bugfix": task = SYMPTOM, location implicit ("users see duplicates", "createdAt
+     missing in response", "tests fail with X"). The dispatched agent prompt is
+     fix-shaped and traces from test → production module.
+   - "refactor": task = TRANSFORMATION preserving behavior ("convert const-object-literal
+     X to a class", "rename Y to Z", "extract function W"). Tests should keep passing.
+   - "feature": new behavior ADDED ("add /version endpoint", "add soft-delete to users").
+     Net-new code dominates.
+   When in doubt — feature.
 
 WORKED EXAMPLES — mirror this structure on real tasks.
 
@@ -65,9 +93,9 @@ DELETE /users/:id that sets deletedAt and returns 204."
 WRONG plan (causes cross-step drift — routes/users.ts will reference an inconsistent
 service signature when steps run independently):
 { "steps": [
-  { "id": "step1", "description": "Add deletedAt to User interface", "dependencies": [] },
-  { "id": "step2", "description": "Update UserService for soft-delete", "dependencies": ["step1"] },
-  { "id": "step3", "description": "Add DELETE route", "dependencies": ["step2"] }
+  { "id": "step1", "description": "Add deletedAt to User interface", "dependencies": [], "kind": "feature" },
+  { "id": "step2", "description": "Update UserService for soft-delete", "dependencies": ["step1"], "kind": "feature" },
+  { "id": "step3", "description": "Add DELETE route", "dependencies": ["step2"], "kind": "feature" }
 ] }
 
 CORRECT plan — ONE step naming all three files explicitly:
@@ -75,7 +103,8 @@ CORRECT plan — ONE step naming all three files explicitly:
   {
     "id": "step1",
     "description": "Implement soft-delete across three files. (1) In src/types.ts, add 'deletedAt: string | null' to the User interface. (2) In src/services/user-service.ts, update create() to set deletedAt: null on new users; update list() to filter out users where deletedAt !== null; preserve get() behavior. (3) In src/routes/users.ts, add app.delete('/users/:id', async (request, reply) => { ... }) that finds the user by id (404 if missing), sets user.deletedAt = new Date().toISOString(), and returns reply.code(204).send(). Preserve all existing routes, imports, and behavior elsewhere.",
-    "dependencies": []
+    "dependencies": [],
+    "kind": "feature"
   }
 ] }
 
@@ -95,12 +124,14 @@ CORRECT plan — two independent steps (no dependencies, can run in parallel):
   {
     "id": "step1",
     "description": "In src/routes/users.ts, add app.get('/health', async () => ({ status: 'ok' })) inside the existing usersRoutes function. Preserve all other routes.",
-    "dependencies": []
+    "dependencies": [],
+    "kind": "feature"
   },
   {
     "id": "step2",
     "description": "Create src/middleware/request-id.ts exporting requestIdPlugin(app: FastifyInstance) that adds an onRequest hook setting reply.header('x-request-id', randomUUID()), AND in src/server.ts add 'import { requestIdPlugin } from \\"./middleware/request-id.js\\";' plus 'requestIdPlugin(app);' after Fastify init. Preserve all existing code in server.ts.",
-    "dependencies": []
+    "dependencies": [],
+    "kind": "feature"
   }
 ] }
 
@@ -113,7 +144,7 @@ Why TWO steps with empty dependencies:
 
 End of examples.
 
-Output ONLY valid JSON matching this schema: { "steps": [{ "id": "step1", "description": "...", "dependencies": [] }] }`;
+Output ONLY valid JSON matching this schema: { "steps": [{ "id": "step1", "description": "...", "dependencies": [], "kind": "feature" }] }`;
 
   async execute(taskDescription: string, context: string, taskMode: 'fast'|'balanced'|'deep'): Promise<PlanOutput> {
     const prompt = `Task: ${taskDescription}\n\nContext:\n${context}\n\nGenerate the plan JSON.`;

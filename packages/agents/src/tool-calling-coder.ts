@@ -1,7 +1,6 @@
 import { ModelRouter } from '@rag-system/model-router';
-import type { ToolCall, ToolDefinition, ToolLoopMessage } from '@rag-system/model-router';
-import type { ModelRole, TaskMode, FileChange } from '@rag-system/shared';
-import { logger, taskEvents, currentTaskContext } from '@rag-system/shared';
+import type { ToolCall, ToolDefinition } from '@rag-system/model-router';
+import type { ModelRole, TaskMode } from '@rag-system/shared';
 import { WorkingSet } from './working-set.js';
 import type { CoderOutput, FileReadyCallback } from './coder.js';
 import {
@@ -37,8 +36,6 @@ import type { LocateResult } from './structural-edits.js';
  * by construction — there is no search/replace step that could go wrong.
  */
 
-const MAX_TOOL_CALLS = 50;
-
 /**
  * v1.32-a.5 pathology guard: how many consecutive errors on the same
  * (tool_name + path) fingerprint trigger a strategy-change nudge. Tuned
@@ -68,7 +65,7 @@ export const MAX_PATHOLOGY_STRIKES = 2;
  * The path will appear in `policy.allowed` (extracted from the task) and the
  * forbidden check will be bypassed.
  */
-const ALWAYS_FORBIDDEN_PATTERNS: RegExp[] = [
+export const ALWAYS_FORBIDDEN_PATTERNS: RegExp[] = [
   /(?:^|\/)package\.json$/,
   /(?:^|\/)package-lock\.json$/,
   /(?:^|\/)pnpm-lock\.yaml$/,
@@ -364,7 +361,7 @@ export const FILE_ARG_KEY: Record<string, string> = {
  * events for SSE clients). delete_file is excluded — clients track removals
  * separately via the final FileChange[] from toFileChanges().
  */
-const WRITE_EMITTING_TOOLS = new Set([
+export const WRITE_EMITTING_TOOLS = new Set([
   'create_file',
   'replace_in_file',
   'add_method',
@@ -375,64 +372,16 @@ const WRITE_EMITTING_TOOLS = new Set([
   'add_export',
 ]);
 
-const SYSTEM_PROMPT = `You are an expert Software Engineer working through tools.
-Given a step description and project context, you implement the change by calling tools.
-
-YOU CANNOT WRITE THE CODE DIRECTLY IN A REPLY. The only way to make changes is via tool calls.
-
-STRUCTURAL TOOLS (PREFERRED for TypeScript/JavaScript edits):
-These tools take symbol names instead of line coordinates and handle indentation for you. Always prefer them when the change fits.
-- add_method(file, container, source) — add a new method to an existing class
-- replace_method(file, container, name, source) — rewrite an existing method's signature+body
-- replace_function(file, name, source) — rewrite a top-level function
-- add_route(file, http_method, route_path, body) — add a Fastify route after the last existing one
-- add_import(file, source, names?, default_name?, type_only?) — add or merge an import
-- add_export(file, source) — add a new top-level export
-
-LINE-COORDINATE TOOLS (fallback):
-- read_file(path) — see actual current bytes with line numbers (use freely)
-- replace_in_file(path, start_line, end_line, new_text) — line-range edit. Use ONLY when no structural tool fits — typically for non-source content (markdown, JSON, YAML, plain text) or unusual code shapes (single-line classes, decorators between import statements, etc.). Picking line coordinates for source code is fragile and has caused multiple categories of bugs in past benchmarks.
-- create_file(path, content) — make a new file
-- delete_file(path) — remove a file
-- done() — signal completion
-
-Workflow:
-1. read_file the target if you need to see the current symbols/structure (e.g. existing class names, existing routes).
-2. Pick the structural tool whose contract matches what you want to do. If no structural tool fits, fall back to replace_in_file.
-3. For structural tools, the "source" you pass is the full declaration (modifiers + signature + body). The runtime re-indents it; you can write at column 0 if you prefer.
-4. When a structural tool errors (e.g. "class X not found"), it usually means your assumption about the file is wrong. read_file again, fix the assumption, retry.
-5. When the step is complete, call done() exactly once.
-
-CRITICAL: line numbers shift after every edit. If you call any tool that mutates a file (add_method, add_import, replace_in_file, ...) and then need to call replace_in_file on the same file, you MUST read_file again first to see the new line numbers. Stale line coords from the original read are wrong after the file has been mutated, and a replace_in_file on stale coords corrupts the file.
-
-CONTENT COMES FROM THE TASK DESCRIPTION — NOT FROM SIBLING CODE. This is the most common silent failure mode:
-- read_file is for understanding STRUCTURE (where to put the new code, what indentation/imports/patterns the file uses) — NOT for copying logic. The new code's BEHAVIOR is specified in the task description.
-- If the task says \`add a /version endpoint that returns { version: '1.0.0' }\`, your new_text MUST contain \`return { version: '1.0.0' }\`. It MUST NOT contain a clone of the /health handler's body just because /health was the nearest example you read.
-- Read sibling routes/methods to learn HOW the file is wired (handler signature, registration style, helper imports). Then write the code the TASK asked for, with that wiring around it.
-- A handler that echoes its neighbour's body instead of doing what was asked is wrong even if the file compiles. Validation will not necessarily catch it; the operator will.
-
-Rules:
-- Match the project's conventions: test framework, module type, .js suffix in imports for NodeNext, strict mode, indentation style.
-- Follow the repo-map provided in context — do NOT reference symbols, files, or methods that aren't listed there (or that you create in this same step).
-- Keep changes minimal. Don't refactor or "improve" code that the step didn't ask about.
-- For new files in TypeScript projects: source files must be .ts (or .tsx), but imports use the .js suffix per NodeNext.
-- NEVER write placeholder comments like "// Existing code…" or "// TODO". Either include the real code or omit the line.
-- For Fastify: hooks take (request, reply) only — no payload/done/next. Use reply.elapsedTime for request duration. Use app.addHook("onResponse", ...) for response logging (not onRequest).
-- Test files are NOT your responsibility for production-code steps. The TesterAgent runs separately. Do not edit __tests__/ files unless the step explicitly says to.
-
-SCOPE DISCIPLINE:
-- Write only to paths the task description names OR paths you have explicitly opened via read_file in this loop. read_file is always free, and a deliberate read grants write access for the rest of this loop ("read-grants-write" rule).
-- If the dispatcher rejects a write with "not in scope: not named in the task and not opened via read_file" — call read_file on that path first, then retry the write. The read is your declared intent to edit.
-- The user-message at the start lists "Allowed write targets" — those are the statically-allowed paths from the task. Anything else requires read_file first.
-- Don't touch project configuration (package.json, tsconfig.json, vitest config, lockfiles, .env) — these stay forbidden even after read_file. The "absolute ban" is non-negotiable.
-- You MUST complete the substantive change requested in the task. Calling done() without making any of the requested edits is wrong unless the task is genuinely a no-op.
-
-Output format: tool calls only. When you have completed the task, call done().`;
-
 /**
  * Result of executing a single tool call against the WorkingSet.
  * `text` becomes the next `tool` role message content; `done` indicates the
  * model called `done()` and the loop should exit.
+ *
+ * v1.32-c: the SYSTEM_PROMPT that previously lived here has moved to
+ * task-agents/feature.ts (FEATURE_SPEC.systemPrompt). This file now exports
+ * only the shared primitives (TOOL_DEFINITIONS, dispatchToolCall, scope
+ * helpers). The class below is a thin wrapper preserving the public API for
+ * existing call sites and unit tests.
  */
 interface ToolDispatchResult {
   text: string;
@@ -798,6 +747,13 @@ export function dispatchToolCall(
   }
 }
 
+/**
+ * v1.32-c thin wrapper preserving the historical class API. The actual
+ * tool-calling loop now lives in `task-agents/runner.ts`; this class
+ * delegates to `runTaskAgent(FEATURE_SPEC, ...)`. Kept so existing tests
+ * (`new ToolCallingCoderAgent(router).execute(...)`) and any external call
+ * sites continue to work without source changes.
+ */
 export class ToolCallingCoderAgent {
   name = 'Coder(tool-calling)';
   role: ModelRole = 'coder';
@@ -814,198 +770,14 @@ export class ToolCallingCoderAgent {
     projectRoot: string,
     onFileReady?: FileReadyCallback,
   ): Promise<CoderOutput> {
-    const ws = new WorkingSet(projectRoot);
-
-    // Build the write policy from the step description. Anything the operator
-    // mentions by path is in scope; everything else (especially configs) is
-    // refused at dispatch time. This is the v1.30.1 fix for scope creep
-    // observed on the v1.30 rag-system benchmark (model wiped package.json
-    // and created untracked vitest-setup.ts on tasks that named neither).
-    const allowed = extractAllowedPaths(stepDescription);
-    const policy: WritePolicy = {
-      allowed,
-      forbiddenPatterns: ALWAYS_FORBIDDEN_PATTERNS,
-    };
-
-    const scopeLine =
-      allowed.size > 0
-        ? `Allowed write targets (only these): ${[...allowed].join(', ')}`
-        : `Allowed write targets: any file (no explicit paths in task)`;
-
-    const messages: ToolLoopMessage[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content:
-          `Step: ${stepDescription}\n\n` +
-          `${scopeLine}\n\n` +
-          `Project context:\n${context}\n\n` +
-          `Now perform the change by calling tools. Always read_file before replace_in_file. Call done() when finished.`,
-      },
-    ];
-
-    const ctx = currentTaskContext();
-    let toolCallsExecuted = 0;
-    let doneCalled = false;
-    // v1.32-a.3 — track consecutive text-only responses for retry-with-nudge.
-    let consecutiveNoToolCalls = 0;
-    // v1.32-a.5 — pathology guard. Detects model spinning on the same
-    // (tool_name + path) tuple with repeated errors. The L4.1 v1.32-a.4
-    // robustness bench showed run #1 took 58 min because Coder retried
-    // near-identical replace_in_file 30+ times, all rolled back by brace-
-    // balance. After PATHOLOGY_THRESHOLD same-fingerprint errors the
-    // dispatcher injects a strategy-change nudge; after MAX_PATHOLOGY_STRIKES
-    // such cycles, the loop bails to surface the failure cleanly.
-    let consecutiveSameToolErrors = 0;
-    let lastErrorFingerprint = '';
-    let pathologyStrikes = 0;
-    let pathologyBail = false;
-    const emittedFilesByPath = new Set<string>();
-
-    for (let round = 0; round < MAX_TOOL_CALLS && !doneCalled; round++) {
-      const response = await this.router.routeWithTools(this.role, messages, TOOL_DEFINITIONS, taskMode);
-      const calls = response.toolCalls ?? [];
-
-      if (calls.length === 0) {
-        // v1.32-a.3 — symmetric with Fixer: up to 2 retries with progressively
-        // stronger nudges. The earlier "or call done() if there is nothing to
-        // do" gave too easy an escape hatch; on hard tasks the model would
-        // produce a text-only response and bail without making any change.
-        consecutiveNoToolCalls++;
-        if (consecutiveNoToolCalls >= 3) {
-          logger.warn(
-            { agent: this.name },
-            'Tool-calling Coder emitted text-only response 3 times in a row; bailing',
-          );
-          break;
-        }
-        const nudge = consecutiveNoToolCalls === 1
-          ? `You responded with text but did not call any tool. Tools are the only way to make changes. Read the file the task references with read_file, then make the edit. Do that now — no preamble.`
-          : `Still no tool call. Tools execute changes; text does nothing. Call read_file on the file the task names, then a structural edit (add_route / add_method / add_import / etc.) or replace_in_file. If the task is genuinely a no-op, call done() — but only as a tool call.`;
-        messages.push({ role: 'assistant', content: response.content });
-        messages.push({ role: 'user', content: nudge });
-        continue;
-      }
-      consecutiveNoToolCalls = 0;
-
-      messages.push({ role: 'assistant', content: response.content, tool_calls: calls });
-
-      for (const call of calls) {
-        const result = dispatchToolCall(call, ws, policy);
-        toolCallsExecuted++;
-        messages.push({ role: 'tool', content: result.text, tool_name: call.function.name });
-
-        // v1.32-a.5 — pathology guard. Same-fingerprint error streak detection.
-        // Fingerprint is tool_name + the path-bearing arg (loose enough to
-        // catch "stuck on same file" even when the model varies start_line /
-        // end_line / new_text between retries — which is exactly the L4.1
-        // brace-balance retry pattern).
-        const isError = result.text.startsWith('error:');
-        if (isError) {
-          const argKey = FILE_ARG_KEY[call.function.name] ?? 'path';
-          const fpPath = String(call.function.arguments[argKey] ?? '');
-          const fp = `${call.function.name}:${fpPath}`;
-          if (fp === lastErrorFingerprint) {
-            consecutiveSameToolErrors++;
-          } else {
-            consecutiveSameToolErrors = 1;
-            lastErrorFingerprint = fp;
-          }
-          if (consecutiveSameToolErrors >= PATHOLOGY_THRESHOLD) {
-            pathologyStrikes++;
-            consecutiveSameToolErrors = 0;
-            lastErrorFingerprint = '';
-            if (pathologyStrikes >= MAX_PATHOLOGY_STRIKES) {
-              logger.warn(
-                { agent: this.name, fingerprint: fp, totalCalls: toolCallsExecuted },
-                'Coder pathology guard: max strikes reached — bailing',
-              );
-              pathologyBail = true;
-              break;
-            }
-            messages.push({
-              role: 'user',
-              content:
-                `You have called ${call.function.name} on "${fpPath}" ${PATHOLOGY_THRESHOLD} times and gotten the same kind of error each time. The current approach is not working — change strategy. Try one of: (a) different start_line/end_line on a re-read of the file (line numbers shift after every edit); (b) a different tool — structural ones (add_route / add_method / add_import) often handle cases where replace_in_file struggles; (c) read_file the path to verify the current state; (d) call done() if you cannot make further progress. Do not retry the same call shape again.`,
-            });
-          }
-        } else {
-          consecutiveSameToolErrors = 0;
-          lastErrorFingerprint = '';
-        }
-
-        if (ctx) {
-          taskEvents.emitEvent({
-            taskId: ctx.taskId,
-            type: 'agent_stream',
-            data: {
-              agent: this.name,
-              role: this.role,
-              chunk: `[${call.function.name}] ${result.text.slice(0, 80)}`,
-              totalLen: toolCallsExecuted,
-              ...(ctx.stepId ? { stepId: ctx.stepId } : {}),
-            },
-          });
-        }
-
-        // Per-file ready signal. The patch-based Coder uses `coder_file_ready`
-        // events for streaming UX; tool-calling reproduces the same so SSE
-        // clients (VSCode extension, Cline) get the same per-file beats. We
-        // emit directly via taskEvents instead of going through the
-        // partial-json-shaped onFileReady callback, because tool-calling
-        // doesn't carry partial-file content (the WorkingSet does).
-        // v1.31: extended to all writing tools (structural + line-coord) via
-        // WRITE_EMITTING_TOOLS; the file-path key may be `path` (line-coord
-        // tools) or `file` (structural tools), looked up via FILE_ARG_KEY.
-        if (ctx && WRITE_EMITTING_TOOLS.has(call.function.name)) {
-          const argKey = FILE_ARG_KEY[call.function.name] ?? 'path';
-          const filePath = String(call.function.arguments[argKey] ?? '');
-          // Skip noop results — add_import returns "ok: no change needed ..."
-          // when everything is already imported, and we don't want a phantom
-          // "Coder produced X" event for a file we didn't touch.
-          const isNoChange = result.text.startsWith('ok: no change');
-          if (filePath && !emittedFilesByPath.has(filePath) && result.text.startsWith('ok') && !isNoChange) {
-            emittedFilesByPath.add(filePath);
-            const wsContent = ws.read(filePath) ?? '';
-            taskEvents.emitEvent({
-              taskId: ctx.taskId,
-              type: 'coder_file_ready',
-              message: `Coder produced ${filePath}`,
-              data: {
-                ...(ctx.stepId ? { stepId: ctx.stepId } : {}),
-                path: filePath,
-                action: call.function.name === 'create_file' ? 'create' : 'modify',
-                size: wsContent.length,
-                index: emittedFilesByPath.size - 1,
-              },
-            });
-          }
-        }
-        // Underscore-prefix to satisfy unused-param check; the hook is reserved
-        // for parity with the patch-based Coder API.
-        void onFileReady;
-
-        if (result.done) {
-          doneCalled = true;
-          break;
-        }
-      }
-
-      if (pathologyBail) break;
-    }
-
-    if (toolCallsExecuted >= MAX_TOOL_CALLS && !doneCalled) {
-      logger.warn(
-        { agent: this.name, toolCalls: toolCallsExecuted },
-        'Tool-calling Coder hit MAX_TOOL_CALLS limit without calling done()',
-      );
-    }
-
-    const files: FileChange[] = ws.toFileChanges();
-    if (files.length === 0) {
-      logger.warn({ agent: this.name }, 'Tool-calling Coder produced no file changes');
-    }
-
-    return { files };
+    void onFileReady;
+    const { FEATURE_SPEC } = await import('./task-agents/feature.js');
+    const { runTaskAgent } = await import('./task-agents/runner.js');
+    return runTaskAgent(
+      FEATURE_SPEC,
+      { stepDescription, context, taskMode },
+      this.router,
+      projectRoot,
+    );
   }
 }

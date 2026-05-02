@@ -1,17 +1,7 @@
 import { ModelRouter } from '@rag-system/model-router';
 import type { ToolLoopMessage } from '@rag-system/model-router';
 import type { ModelRole, TaskMode, FileChange } from '@rag-system/shared';
-import { logger, taskEvents, currentTaskContext } from '@rag-system/shared';
-import { WorkingSet } from './working-set.js';
-import {
-  TOOL_DEFINITIONS,
-  dispatchToolCall,
-  extractAllowedPaths,
-  FILE_ARG_KEY,
-  PATHOLOGY_THRESHOLD,
-  MAX_PATHOLOGY_STRIKES,
-  type WritePolicy,
-} from './tool-calling-coder.js';
+import { extractAllowedPaths } from './tool-calling-coder.js';
 import type { FixerOutput } from './fixer.js';
 
 /**
@@ -36,11 +26,6 @@ import type { FixerOutput } from './fixer.js';
  *   instead of deleting the code that uses them, address only the listed
  *   issues.
  */
-
-// Fixer should converge faster than Coder — it's addressing a known issue, not
-// implementing a feature. Tighter budget keeps the conversation short and
-// prevents the model from wandering into more issues than it was asked to fix.
-const MAX_TOOL_CALLS = 25;
 
 // Conversation pruning thresholds. v1.30.3 live benchmark showed Ollama
 // `fetch failed` after ~7 minutes of Fixer round-trips on a 91-file project —
@@ -70,45 +55,14 @@ export function pruneHistory(messages: ToolLoopMessage[]): boolean {
   return true;
 }
 
-const FIXER_SYSTEM_PROMPT = `You are a Code Fixer. You make MINIMAL edits to fix listed validation issues. Only tool calls produce changes — text replies do nothing.
-
-TOOLS (use the structural tool whose contract matches the fix; fall back to replace_in_file only for non-source content or unusual code shapes):
-- read_file(path) — inspect a file (always free; opens write-scope on it for this loop)
-- add_import(file, source, names, default_name?, type_only?) — for "Cannot find name X". REQUIRES the names array; bare add_import(file, source) makes a useless side-effect import.
-- replace_method(file, container, name, source) — rewrite a class method body
-- replace_function(file, name, source) — rewrite a top-level function
-- add_method / add_route / add_export — introduce a new symbol
-- replace_in_file(path, start_line, end_line, new_text) — last-resort line edit
-- create_file / delete_file / done()
-
-WORKFLOW:
-1. Pick an issue. It names a file (TS error: "src/foo.ts:42") or a test (test failure: "tests/users.test.ts > UserService > ..."). Open that file with read_file.
-2. If a test failed, the bug is almost always in the PRODUCTION module the test exercises — not in the test. Look at the test's import statements, read the production file, fix it there.
-3. Make the smallest edit that resolves the issue. ADDRESS ONLY LISTED ISSUES — don't refactor working code.
-4. Repeat for each issue, then call done().
-
-SCOPE: read_file on any non-forbidden path grants write access to that path for the rest of this loop. So the resolution path for "I want to edit X but it's not in my allowed list" is always: call read_file(X), then retry the edit. Forbidden paths (package.json, tsconfig, lockfiles, .env, vitest/jest config, .gitignore) are never writable. Test files (tests/, __tests__/, *.test.ts, *.spec.ts) are not writable unless the Coder produced them — find the production code instead.
-
-COMMON TS PATTERNS:
-- "Cannot find name 'X'" → add_import the missing symbol. Don't delete the code that uses it.
-- "Type Y is not assignable to Z" → fix the offending expression, not the whole function.
-- Date arithmetic "left-hand side must be number" → \`d1.getTime() - d2.getTime()\`
-- "as jest.Mock" → \`as ReturnType<typeof vi.fn>\`; \`import { vi } from 'vitest'\`.
-
-Output: tool calls only. The first thing you call should be read_file on the file the first issue points at.`;
-
-const ALWAYS_FORBIDDEN_PATTERNS_LOCAL: RegExp[] = [
-  /(?:^|\/)package\.json$/,
-  /(?:^|\/)package-lock\.json$/,
-  /(?:^|\/)pnpm-lock\.yaml$/,
-  /(?:^|\/)yarn\.lock$/,
-  /(?:^|\/)tsconfig.*\.json$/,
-  /(?:^|\/)vitest\.config\.(?:ts|js|mjs|cjs)$/,
-  /(?:^|\/)jest\.config\.(?:ts|js|mjs|cjs)$/,
-  /(?:^|\/)\.env(?:\..+)?$/,
-  /(?:^|\/)turbo\.json$/,
-  /(?:^|\/)\.gitignore$/,
-];
+/**
+ * v1.32-c: FIXER_SYSTEM_PROMPT and the local copy of ALWAYS_FORBIDDEN_PATTERNS
+ * have moved to task-agents/bugfix.ts (BUGFIX_SPEC.systemPrompt) and
+ * tool-calling-coder.ts (canonical ALWAYS_FORBIDDEN_PATTERNS). This file
+ * retains the helpers (`pruneHistory`, `buildFixerAllowedSet`, `isTestPath`,
+ * `FIXER_TEST_PATH_FORBIDDEN`) consumed by BUGFIX_SPEC and the runner, plus
+ * a thin class wrapper preserving the public API.
+ */
 
 /**
  * Test-file paths the Fixer is not trusted to write to unless the Coder
@@ -143,9 +97,9 @@ const TEST_PATH_PATTERNS: RegExp[] = [
  * "what counts as a test path"; the forbidden-list usage reads naturally as
  * "the Fixer forbidden additions." Same regex set, different consumers.
  */
-const FIXER_TEST_PATH_FORBIDDEN: RegExp[] = TEST_PATH_PATTERNS;
+export const FIXER_TEST_PATH_FORBIDDEN: RegExp[] = TEST_PATH_PATTERNS;
 
-function isTestPath(p: string): boolean {
+export function isTestPath(p: string): boolean {
   return TEST_PATH_PATTERNS.some(re => re.test(p));
 }
 
@@ -184,6 +138,13 @@ export function buildFixerAllowedSet(currentFiles: FileChange[], issues: string[
   return out;
 }
 
+/**
+ * v1.32-c thin wrapper preserving the historical class API. The actual loop
+ * now lives in `task-agents/runner.ts`; this class delegates to
+ * `runTaskAgent(BUGFIX_SPEC, ...)`. Kept so existing tests
+ * (`new ToolCallingFixerAgent(router).execute(...)`) and any external call
+ * sites continue to work without source changes.
+ */
 export class ToolCallingFixerAgent {
   name = 'Fixer(tool-calling)';
   role: ModelRole = 'fixer';
@@ -200,180 +161,13 @@ export class ToolCallingFixerAgent {
     taskMode: TaskMode,
     projectRoot: string,
   ): Promise<FixerOutput> {
-    const ws = new WorkingSet(projectRoot);
-
-    const allowed = buildFixerAllowedSet(currentFiles, issues);
-    const policy: WritePolicy = {
-      allowed,
-      // Combine config-file forbidden list with test-file forbidden patterns.
-      // Test paths are forbidden so v1.32-a.1's read-grants-write rule cannot
-      // be used to bypass the v1.32-a test-scope discipline (read a test then
-      // edit its assertions to silence them — the L4.1 game-the-test pattern).
-      // A Coder-produced test stays writable because `policy.allowed.has(path)`
-      // takes precedence over the forbidden check.
-      forbiddenPatterns: [...ALWAYS_FORBIDDEN_PATTERNS_LOCAL, ...FIXER_TEST_PATH_FORBIDDEN],
-    };
-
-    const initiallyAllowed =
-      allowed.size > 0
-        ? [...allowed].join(', ')
-        : '(none derivable — read_file the file each issue points at, then edit it)';
-
-    const issuesBlock = issues.map((iss, i) => `[issue ${i + 1}] ${iss}`).join('\n\n');
-    const filesSummary = currentFiles
-      .map(f => {
-        if (f.action === 'create') return `- ${f.path} (created by Coder, on disk)`;
-        if (f.action === 'modify') return `- ${f.path} (modified by Coder, on disk)`;
-        return `- ${f.path} (deleted by Coder)`;
-      })
-      .join('\n');
-
-    // The user message lays out: issues → existing Coder files → write-scope
-    // (with the read_file expansion rule positioned NEXT to the initial allowed
-    // list so the model reads them as related, not as a static constraint
-    // followed by an abstract policy hidden in the system prompt) → context.
-    const messages: ToolLoopMessage[] = [
-      { role: 'system', content: FIXER_SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content:
-          `Validation issues to fix:\n${issuesBlock}\n\n` +
-          `Files the Coder already produced (current state on disk):\n${filesSummary || '(none)'}\n\n` +
-          `Initially-allowed write targets: ${initiallyAllowed}\n` +
-          `Scope expansion: read_file on any non-forbidden path grants write access to it for this loop. ` +
-          `So if your fix needs to edit a file outside the initial list (e.g. a service module behind a failing test), call read_file on it first — then your edit will be allowed.\n\n` +
-          `Project context:\n${context}\n\n` +
-          `Start by calling read_file on the file the first issue references. Make minimal edits. Call done() when every listed issue is fixed.`,
-      },
-    ];
-
-    const ctx = currentTaskContext();
-    let toolCallsExecuted = 0;
-    let doneCalled = false;
-    // v1.32-a.3 — track consecutive text-only responses. Up to 2 retries with
-    // progressively stronger nudges before bailing. The previous one-shot retry
-    // ("Or call done() if no source edits can fix") gave the model an explicit
-    // permission to bail, which it took ~50% of the time on L4.1. The new
-    // nudges remove that escape and tell the model exactly what to call next.
-    let consecutiveNoToolCalls = 0;
-    // v1.32-a.5 — symmetric with Coder: same-fingerprint error pathology guard.
-    let consecutiveSameToolErrors = 0;
-    let lastErrorFingerprint = '';
-    let pathologyStrikes = 0;
-    let pathologyBail = false;
-
-    for (let round = 0; round < MAX_TOOL_CALLS && !doneCalled; round++) {
-      const response = await this.router.routeWithTools(this.role, messages, TOOL_DEFINITIONS, taskMode);
-      const calls = response.toolCalls ?? [];
-
-      if (calls.length === 0) {
-        consecutiveNoToolCalls++;
-        if (consecutiveNoToolCalls >= 3) {
-          // Two retries already issued without a single tool call — model is
-          // genuinely stuck. Break out; outer pipeline will surface
-          // commit_skipped with the issues unaddressed.
-          logger.warn(
-            { agent: this.name },
-            'Tool-calling Fixer emitted text-only response 3 times in a row; bailing',
-          );
-          break;
-        }
-        const nudge = consecutiveNoToolCalls === 1
-          ? `You responded with text but did not call any tool. Tools are how fixes happen. Pick the file the first issue references; call read_file on it; then edit. Do that now — no preamble.`
-          : `Still no tool call. The validation will not fix itself. The first listed issue points at a file path. Call read_file on that exact path RIGHT NOW. If you genuinely believe no source edit can fix the issues, call done() — but only as a tool call, not as text.`;
-        messages.push({ role: 'assistant', content: response.content });
-        messages.push({ role: 'user', content: nudge });
-        continue;
-      }
-      consecutiveNoToolCalls = 0;
-
-      messages.push({ role: 'assistant', content: response.content, tool_calls: calls });
-
-      for (const call of calls) {
-        const result = dispatchToolCall(call, ws, policy);
-        toolCallsExecuted++;
-        messages.push({ role: 'tool', content: result.text, tool_name: call.function.name });
-
-        // v1.32-a.5 — pathology guard symmetric with Coder. Same-fingerprint
-        // error streak detection: model spinning on the same (tool + path)
-        // tuple with repeated errors triggers a strategy nudge after K
-        // consecutive errors, hard-bails after 2 such strikes.
-        const isError = result.text.startsWith('error:');
-        if (isError) {
-          const argKey = FILE_ARG_KEY[call.function.name] ?? 'path';
-          const fpPath = String(call.function.arguments[argKey] ?? '');
-          const fp = `${call.function.name}:${fpPath}`;
-          if (fp === lastErrorFingerprint) {
-            consecutiveSameToolErrors++;
-          } else {
-            consecutiveSameToolErrors = 1;
-            lastErrorFingerprint = fp;
-          }
-          if (consecutiveSameToolErrors >= PATHOLOGY_THRESHOLD) {
-            pathologyStrikes++;
-            consecutiveSameToolErrors = 0;
-            lastErrorFingerprint = '';
-            if (pathologyStrikes >= MAX_PATHOLOGY_STRIKES) {
-              logger.warn(
-                { agent: this.name, fingerprint: fp, totalCalls: toolCallsExecuted },
-                'Fixer pathology guard: max strikes reached — bailing',
-              );
-              pathologyBail = true;
-              break;
-            }
-            messages.push({
-              role: 'user',
-              content:
-                `You have called ${call.function.name} on "${fpPath}" ${PATHOLOGY_THRESHOLD} times and gotten the same kind of error each time. The current approach is not working — change strategy. Try one of: (a) read_file the path again to see the current state (line numbers shift after every edit); (b) a different tool — structural ones (add_method / replace_method / add_import) often handle cases where replace_in_file struggles; (c) call done() if you cannot make further progress. Do not retry the same call shape again.`,
-            });
-          }
-        } else {
-          consecutiveSameToolErrors = 0;
-          lastErrorFingerprint = '';
-        }
-
-        if (ctx) {
-          taskEvents.emitEvent({
-            taskId: ctx.taskId,
-            type: 'agent_stream',
-            data: {
-              agent: this.name,
-              role: this.role,
-              chunk: `[${call.function.name}] ${result.text.slice(0, 80)}`,
-              totalLen: toolCallsExecuted,
-              ...(ctx.stepId ? { stepId: ctx.stepId } : {}),
-            },
-          });
-        }
-
-        if (result.done) {
-          doneCalled = true;
-          break;
-        }
-      }
-
-      if (pathologyBail) break;
-
-      // Prune conversation history before the next Ollama round-trip. Without
-      // this, long Fixer sessions on real projects crash the llama runner —
-      // see v1.30.3 benchmark notes.
-      if (pruneHistory(messages)) {
-        logger.debug({ agent: this.name, retainedMessages: messages.length }, 'Pruned Fixer conversation history');
-      }
-    }
-
-    if (toolCallsExecuted >= MAX_TOOL_CALLS && !doneCalled) {
-      logger.warn(
-        { agent: this.name, toolCalls: toolCallsExecuted },
-        'Tool-calling Fixer hit MAX_TOOL_CALLS limit without calling done()',
-      );
-    }
-
-    const files: FileChange[] = ws.toFileChanges();
-    if (files.length === 0) {
-      logger.debug({ agent: this.name }, 'Tool-calling Fixer produced no file changes — issues may not be source-fixable');
-    }
-
-    return { files };
+    const { BUGFIX_SPEC } = await import('./task-agents/bugfix.js');
+    const { runTaskAgent } = await import('./task-agents/runner.js');
+    return runTaskAgent(
+      BUGFIX_SPEC,
+      { stepDescription: '<validation>', context, taskMode, issues, currentFiles },
+      this.router,
+      projectRoot,
+    );
   }
 }
