@@ -1,0 +1,234 @@
+# Changelog — RAG System
+
+> Хронологический архив итераций. Каждая запись — что изменилось, зачем, результат, ссылки на design / bench.
+> Формат жёстко append-only. Новые итерации добавляются СВЕРХУ (newest first).
+> Подробности pre-impl — [docs/designs/](docs/designs/), измерения — [docs/benchmarks/runs/](docs/benchmarks/runs/).
+
+---
+
+## v1.32-d — llama-swap backend swap (2026-05-02) — Phase 3 closure
+
+Замена `OllamaClient` на `LlamaSwapClient` (OpenAI-compatible API), default `LLM_BACKEND=llamacpp`. Ollama сохранён как fallback. **Phase E bench:** L1.1 ×4 (3/3 commits, mean 101s, ~50% faster than Ollama), L4.1 ×3 (1/3 clean fix, parity). **Phase F flipped:** `LLM_BACKEND=llamacpp`, `LLM_LARGE_MODEL=qwen-coder-long` (16K), `TOOL_CALLING_CODER=true` дефолты. **+34 unit-tests, 445/445.**
+- v1.32-d.1 — `mergeFixerChanges` fix (Coder edits сохраняются когда Fixer трогает subset)
+- nomic-embed-text-v1.5 task-prefixes (`search_query:` / `search_document:`) wired backend-agnostic
+- **Design:** [v1.32-d-llamacpp-backend.md](docs/designs/v1.32-d-llamacpp-backend.md)
+- **Bench:** [2026-05-02-v1.32-d-llamacpp-backend.md](docs/benchmarks/runs/2026-05-02-v1.32-d-llamacpp-backend.md)
+
+## v1.32-c — Task-agents over shared loop (Phase A+C, 2026-05-02)
+
+Унифицированный `runTaskAgent(spec, input)` loop в [packages/agents/src/task-agents/](packages/agents/src/task-agents/) с тремя specs: `FEATURE_SPEC`, `BUGFIX_SPEC`, `REFACTOR_SPEC`. Specialization через prompts + tool selection, не отдельные классы. Phase B+D частично закрыта в v1.32-d (sub-agents tool dispatch).
+- **Design:** [v1.32-c-sub-agents.md](docs/designs/v1.32-c-sub-agents.md)
+
+## v1.32-a.6 — Prettier post-step (2026-04-30)
+
+`prettier --write` запускается на `writtenFiles` после validation pass и до commit. **Cosmetics-only — никогда не блокирует commit.** Детект через `.prettierrc*` / `prettier.config.*` / package.json `"prettier"` field; только локальный `node_modules/.bin/prettier`, никаких npx fallback. **+15 тестов, 441/441.**
+- **Атакует:** v1.32-a.4 finding — 4/5 runs landed с cosmetic style noise (indent, blank lines, trailing commas)
+
+## v1.32-a.5 — Coder/Fixer pathology guard (2026-04-30)
+
+Detection "stuck on same `tool:path` tuple": после `PATHOLOGY_THRESHOLD=5` repeated errors → strategy nudge; после `MAX_PATHOLOGY_STRIKES=2` → hard bail. **Wall-time bounded 23 min vs 58 min** (v1.32-a.4 outlier). **+5 тестов, 392/392.**
+- **Bench:** [2026-04-30-v1.32-a.5-pathology-guard.md](docs/benchmarks/runs/2026-04-30-v1.32-a.5-pathology-guard.md)
+
+## v1.32-a.4 — L4.1 robustness ×5 (2026-04-30)
+
+5/5 commits land, 0/5 destructive failures, 0/5 Fixer-bail. Median wall 6 min, 1/5 byte-perfect, 3/5 minor style noise (→ v1.32-a.6), 1/5 structural noise (dead code). **Variance moved to QUALITY layer, не CORRECTNESS.**
+- **Bench:** [2026-04-30-v1.32-a.4-l4.1-robustness.md](docs/benchmarks/runs/2026-04-30-v1.32-a.4-l4.1-robustness.md)
+
+## v1.32-a.3 — Fixer reliability + Coder retry symmetry (2026-04-30)
+
+Consolidated FIXER_SYSTEM_PROMPT (~40 → ~20 строк); no-tool-calls retry с прогрессивно strong nudges, bail только на 3-м consecutive text-only response. **L4.1 first end-to-end committed bug-fix (commitHash 8319157, ~7 min wall).** **+5 тестов, 387/387.**
+- **Bench:** [2026-04-30-v1.32-a.3-fixer-reliability.md](docs/benchmarks/runs/2026-04-30-v1.32-a.3-fixer-reliability.md)
+
+## v1.32-a.2 — Orchestrator commit-aggregation (2026-04-30)
+
+`runValidationLoop` возвращает `{ passed, issuesCount, writtenFiles }` — Fixer's writes аппендятся в outer `writtenFiles` set. Лечит: validation passed → "Committed changes" с empty hash → git status показывал uncommitted file. **+2 тестов, 382/382.**
+- **Bench:** [2026-04-30-v1.32-a.2-commit-aggregation.md](docs/benchmarks/runs/2026-04-30-v1.32-a.2-commit-aggregation.md)
+
+## v1.32-a.1 — Read-grants-write (2026-04-30)
+
+`read_file(p)` в текущем loop'е grant'ит write permission to `p` — deliberate чтение становится transparent scope-acquisition gesture. Fixer test-path forbidden закрывает loophole (read test → silence assertion). **L4.1 byte-perfect fix в working tree (orchestrator commit-bug → v1.32-a.2).** **+18 тестов, 380/380.**
+- **Bench:** [2026-04-30-v1.32-a.1-read-grants-write.md](docs/benchmarks/runs/2026-04-30-v1.32-a.1-read-grants-write.md)
+
+## v1.32-a — Fixer test-scope discipline (2026-04-29)
+
+`buildFixerAllowedSet` отбрасывает test-paths из issue-mention pool unless Coder touched them. **Test-gaming impossible:** L4.1 commit_skipped (correct red signal) vs v1.31.2 broken commit landed. **+6 тестов, 362/362.**
+- **Bench:** [2026-04-30-v1.32-a-fixer-test-scope.md](docs/benchmarks/runs/2026-04-30-v1.32-a-fixer-test-scope.md)
+
+## v1.31.2 — Bench coverage extension (2026-04-29)
+
+L3.1 byte-perfect (Coder fell back на replace_in_file для object-literal — validates negative case). **L4.1 critical finding:** Coder modified test вместо production code → green commit с broken bug shipped. Surface'ил semantic gap для navigational tasks. → v1.32-a.
+- **Bench:** [2026-04-30-v1.31.2-bench-coverage-extension.md](docs/benchmarks/runs/2026-04-30-v1.31.2-bench-coverage-extension.md)
+
+## v1.31.1 — Validation prompt-fixes (2026-04-29)
+
+L1.1 failure rate 50% → 0%. L2.1 duplicate-register absent. Fixer empty-names `add_import` 8 → 0 (20+ named). Mid-v1.31 prompt fixes (line-shift warning + Fixer add_import names) validated empirically.
+- **Bench:** [2026-04-30-v1.31.1-prompt-fixes.md](docs/benchmarks/runs/2026-04-30-v1.31.1-prompt-fixes.md)
+
+## v1.31 — Structural anchor edits (2026-04-29)
+
+6 новых AST-aware tools: `add_method`, `replace_method`, `replace_function`, `add_route` (Fastify-aware), `add_import`, `add_export`. Заменяют line-coord `replace_in_file` для TS/JS edits. **`/version` → byte-perfect через `add_route` за 3 calls / 12 min** (vs 25 calls / 32 min на v1.30.5). `getSize()` placed INSIDE class by construction (vs OUTSIDE на v1.30). **+62 тестов, 356/356.**
+- **Bench:** [2026-04-30-v1.31-structural-anchors.md](docs/benchmarks/runs/2026-04-30-v1.31-structural-anchors.md)
+
+## v1.30.5 — Verify-syntax tool после replace_in_file (2026-04-29)
+
+`checkBraceBalance` (string/comment-aware) до и после replace; на дисбаланс → atomic undo через `WorkingSet.overwriteRaw`. **`/version` task завершилась без Ollama crash на 91-файловом проекте впервые** (graduated с `task_failed` infra layer на `commit_skipped` output quality layer). **+14 тестов, 294/294.**
+- **Bench:** [2026-04-29-v1.30.5-verify-syntax.md](docs/benchmarks/runs/2026-04-29-v1.30.5-verify-syntax.md)
+
+## v1.30.4 — Coder cargo-cult fix (2026-04-29)
+
+Prompt section "CONTENT COMES FROM THE TASK DESCRIPTION — NOT FROM SIBLING CODE". `/version` впервые вернул correct `{ version: '1.0.0' }` (vs клоны /health body). Surface'ил структurную failure (consumed closing brace) → v1.30.5.
+- **Bench:** [2026-04-29-v1.30.4-cargo-cult-fix.md](docs/benchmarks/runs/2026-04-29-v1.30.4-cargo-cult-fix.md)
+
+## v1.30.3.1 — Fixer history truncation (2026-04-29)
+
+`pruneHistory` keeps `system + initial user task + last 16 trail messages`; `MAX_TOOL_CALLS` 50 → 25. **First Fixer attempt completed без crash на 91-файловом проекте (~2 min vs 8 min crash).** **+6 тестов, 280/280.**
+- **Bench:** [2026-04-29-v1.30.3.1-fixer-history-pruning.md](docs/benchmarks/runs/2026-04-29-v1.30.3.1-fixer-history-pruning.md)
+
+## v1.30.3 — Fixer migration to tool-calling (2026-04-29)
+
+`ToolCallingFixerAgent` с issues-first signature; `buildFixerAllowedSet(currentFiles, issues)` — union paths из Coder output И mentions в error messages. Coder-Fixer работают только в lockstep (один флаг). **Live tests crashed Ollama (~7-8 min)** — pattern reproducible, infra ceiling под длинными tool-calling sessions. → v1.30.3.1. **+6 тестов, 274/274.**
+- **Bench:** [2026-04-29-v1.30.3-tool-calling-fixer.md](docs/benchmarks/runs/2026-04-29-v1.30.3-tool-calling-fixer.md)
+
+## v1.30.1 — Scope discipline в tool-calling Coder (2026-04-29)
+
+`extractAllowedPaths(taskDescription)` + `ALWAYS_FORBIDDEN_PATTERNS` (package.json, lockfiles, configs). **Scope creep устранён:** `/version` task на v1.30 wiped package.json + создал vitest-setup.ts; на v1.30.1 — ТОЛЬКО server.ts. **+14 тестов, 268/268.**
+- **Bench:** [2026-04-29-v1.30.1-scope-discipline.md](docs/benchmarks/runs/2026-04-29-v1.30.1-scope-discipline.md)
+
+## v1.30 — Tool-calling Coder (2026-04-29) — Phase 3 entry
+
+5 tools (`read_file`/`replace_in_file`/`create_file`/`delete_file`/`done`); `WorkingSet` с lazy disk read; `chatWithTools` с inline-content fallback parser для qwen2.5-coder/gemma2 quirk (tool calls в `content`, не structured). **v1.29 scale ceiling сломан:** rag-system /version 0/10 → 5.2/10 (server.ts surgical edit). `TOOL_CALLING_CODER=true` opt-in (стал дефолт в v1.32-d). **+31 тест, 254/254.**
+- **Bench:** [2026-04-29-v1.30-tool-calling-coder.md](docs/benchmarks/runs/2026-04-29-v1.30-tool-calling-coder.md)
+
+## v1.29.1 — Repo-map at scale (2026-04-29)
+
+`DEFAULT_MAX_BYTES` 6K → 16K (~4K tokens); `isTestFile` helper; render order highlights → production → tests. **rag-system-target (91 файл): production truncated 60% → 10%, tests явно отделены, scope-creep risk low.** **+4 теста, 223/223.**
+
+## v1.29 — Scale validation на rag-system (2026-04-29) — Phase 3 trigger
+
+Bench на 91-файловом TS проекте (65 with symbols, 6717 LOC). Indexing 3.5s / 210 vectors — OK. **Atomic L1' `/version`: 0/10** (5 search-not-found cascades — patch-based Coder hallucinates search блоки на medium scale). **Phase 3 archtectural shift necessary** (→ tool-calling).
+- **Bench:** [2026-04-29-v1.29-scale-rag-system.md](docs/benchmarks/runs/2026-04-29-v1.29-scale-rag-system.md)
+
+## v1.28 — Silent partial completion events (2026-04-29)
+
+Новый event `commit_partial` между `commit_skipped` и `done`. Tracks `unrecoveredWrites: string[]`; `done.data` расширен `{ partial, failedStepIds, unrecoveredWrites }`. Pure observability — UX win, бенчмарк scores не двигает. **+2 теста, 219/219.**
+
+## v1.27 — Per-agent context tailoring (PARTIAL — 2026-04-29)
+
+**✅ Landed:** Planner few-shot examples (multi-file feature → ОДИН step coupled). **❌ Reverted после empirical regression:** lean Architect/Reviewer/Tester context — wall time 3-5× медленнее, L2.1 variance взорвалась `[10, 1]`. Architect's `design` field load-bearing для Coder. → orchestrator revert'нут к v1.26 контекстам.
+- **Bench:** [2026-04-29-v1.27-per-agent-context.md](docs/benchmarks/runs/2026-04-29-v1.27-per-agent-context.md)
+
+## v1.26 — Few-shot examples в Coder/Fixer (2026-04-29)
+
+Worked examples (input → output) вместо абстрактных prose rules. **L2.1 lifted from variance hell to deterministic 10/10** (mean 6.4 → 10.0, обе попытки byte-identical к Example A). L2.3 cumulative: 6.8 partial + 9.0 GREEN, no commit_skipped. Mean across 6 runs: 9.3/10.
+- **Bench:** [2026-04-29-v1.26-few-shot.md](docs/benchmarks/runs/2026-04-29-v1.26-few-shot.md)
+
+## v1.25 — Repo-map в каждом промпте (2026-04-28) — главный структурный шаг Phase 2
+
+`buildRepoMap(graph, projectRoot, opts?)` с per-file relative path + indented signatures, token budget (default 6000 chars), `highlightFiles` (entry points + previousChanges paths) pinned at top. Рендерится **вторым** блоком промпта между Project Conventions и Recently-modified. **L2.3 cumulative впервые landed GREEN 9.2/10** (прежний потолок 5.0/10 partial commit).
+- v1.25.1 — Validation-Fixer write throws не крашат task (try/catch + log)
+- v1.25.2 — Reindex прунит graph по deleted files (атакует "ghost files" в repo-map)
+- **Bench:** [2026-04-28-v1.25-repo-map.md](docs/benchmarks/runs/2026-04-28-v1.25-repo-map.md)
+
+## v1.24 — Whitespace-tolerant edit matching (2026-04-28)
+
+`applyEdits` strict-first → tolerant fallback с `\s+`-нормализацией; `tolerantEdits: number[]` в ApplyResult. Tolerant требует уникального match (zero / ≥2 → abort). Whitespace-only guard. Insurance policy — на бенчмарках ни разу не сработал, false-positive отсутствуют. **+9 тестов.**
+- **Bench:** [2026-04-28-v1.24-whitespace-tolerant.md](docs/benchmarks/runs/2026-04-28-v1.24-whitespace-tolerant.md)
+
+## v1.23 — Patch-based code editing (search/replace blocks) (2026-04-27) — главный safety win
+
+`FileChange` discriminated union (`create | modify | delete`); для modify — массив `edits: Array<{search, replace}>`, нет `content`. `applyEdits()` zero/multiple matches → abort, atomic. **Файл никогда не разрушается, даже при неверном edit. Main защищён.** L2.1 на qwen2.5-coder:32b → 10/10 GREEN.
+- v1.23.1 — entry-point файлы (server.ts/main.ts) всегда в ragFilePaths
+- v1.23.2 — `dedupeChangesByPath` (modify edits сливаются в одно atomic apply)
+- v1.23.3 — retry-with-real-content (Aider iterative editing pattern)
+- **+10 тестов, 196/196.** Cumulative state регрессирует на всех 3 моделях — фундаментальное ограничение, не лечится правилами.
+- **Bench:** [2026-04-27-v1.21-v1.23-multi-model.md](docs/benchmarks/runs/2026-04-27-v1.21-v1.23-multi-model.md)
+
+## v1.22 — Cross-step consistency & prompt hardening
+
+`previousChanges: FileChange[]` snapshot для executeStep; новый блок "Recently modified by previous steps (CURRENT state — SUPERSEDES Existing project files)". Coder/Fixer prompts усилены правилом приоритета над диском.
+- v1.22.1 — Planner rule: same-file sequential dependencies
+- v1.22.2 — `const` exports indexing (`export const X = {...}` теперь попадают в RAG)
+- v1.22.3 — Coder rules 9-13 (entry-point preservation, no `require()` в ESM, file extension rule, Fastify quick reference); Tester explicit vitest mocking guide
+
+## v1.21 — Context fidelity & reliability (working baseline)
+
+`ProjectConventions` модуль (testFramework, moduleType, tsStrict, runtimeFrameworks, entryPoints). `buildPromptContext` с 4 секциями. **`COMMIT_ONLY_IF_VALID=true`** — git коммит только при passing validation. **`TESTER_ENABLED`** flag (default true, но в проде часто false из-за jest-style моков). `PLANNER_MAX_STEPS=50` hard cap. Critical bugfixes: glob ignored node_modules в sandbox; Validator на неверном projectRoot.
+
+## v1.18 — VSCode Extension
+
+12-й пакет монорепо, esbuild → `dist/extension.js` (~18 KB). Activity bar с двумя TreeView (Projects, Tasks); status bar с активным проектом; команды Run Task / Index / Register Project / Stream Progress; OutputChannel "RAG System" форматирует SSE events; polling /tasks каждые 5с. **Новый API endpoint** `POST /index { project?, root? }`. **+12 тестов.**
+
+## v1.17 — Streaming Coder
+
+`BaseAgent.streamLLM` AsyncIterable; `partial-json.ts` string-aware scanner с поддержкой markdown fence; `CoderAgent.execute(..., onFileReady?)` callback срабатывает на каждом готовом файле. Новый event `coder_file_ready { stepId, path, action, size, index }`. **+14 тестов.**
+
+## v1.16 — MCP проекты
+
+MCP server использует тот же `ProjectRegistry`+`ProjectManager` что API. Новые tools: `list_projects`, `register_project`. Optional `project_id` на index_codebase / search_code / get_related_code / run_task / list_decisions / add_decision.
+
+## v1.15 — Multi-project
+
+`Project` модель + `ProjectRegistry` (top-level SQLite в `data/projects.db`). `projectPaths(project)` — изолированный layout `data/projects/<id>/{memory.db, vectors/, graphs/, backups/}`. `ProjectManager` lazy lifecycle. API endpoints: GET /projects, GET /project/:id, POST /project. **+23 тестов.**
+
+## v1.14 — Live прогресс индексации
+
+Events `index_start | index_file | index_skip | index_done` на канале `task:<indexId>`. Throttle 200мс. MCP `index_codebase` возвращает indexId + URL стрима. **+5 тестов.**
+
+## v1.13 — Tolerant JSON parsing
+
+`tryParseJsonTolerant<T>` strict-first → 6 фиксеров (BOM, code-fence, extract-from-prose, comments, trailing-commas, escape-control-in-strings). Каждый фиксер string-aware. **+15 тестов.**
+
+## v1.12 — Параллельная индексация файлов
+
+`Semaphore` (FIFO, counting); `embedWithCache` оборачивает только сетевой round-trip; `indexCodebase` использует pMap(files, fileConcurrency). `FILE_CONCURRENCY=4`, `EMBED_CONCURRENCY=8` дают ~5-8× speedup на холодном кеше.
+
+## v1.11 — Параллельный embed
+
+`pMap(items, n, mapper)` sliding-window pool в graph-retriever. `EMBED_CONCURRENCY=8` default. Cache-хиты не держат слот.
+
+## v1.10 — Streaming агентов
+
+`OllamaClient.chatStream()` AsyncIterable с NDJSON-парсером; `BaseAgent.callLLM` теперь streaming внутри (аккумулирует для backwards compat). `AsyncLocalStorage` контекст задачи (taskId/stepId через 5 слоёв без изменения сигнатур). Event `agent_stream` throttle 120ms.
+
+## v1.9 — DAG-aware параллелизм Orchestrator
+
+Независимые шаги идут одновременно через `Promise.race`. `AGENTS_PARALLELISM=3` default. `detectCycles()` итеративный DFS. Dangling deps → шаг помечается skipped.
+
+## v1.8 — Наблюдаемость
+
+`taskLogger(taskId)` pino.child с тaglинe taskId. `BackupManager.prune(maxAgeMs)` — `BACKUP_MAX_AGE_DAYS=7` default. setInterval с `unref()`.
+
+## v1.7 — MCP resources + prompts
+
+Resources: `adr://recent`, `adr://{id}`, `failures://top`, `tasks://recent`. Prompts: `add-feature`, `fix-bug`, `refactor`, `add-tests` — модель учится на прошлых ошибках через MCP. **+14 тестов.**
+
+## v1.6 — Полиглот
+
+tree-sitter (0.25) + python/rust/go в `@rag-system/code-graph`. `ASTParser` диспетчер по расширению. Lazy load с graceful degradation. **+6 тестов на 4 языках.**
+
+## v1.5 — Live progress (SSE)
+
+`TaskEventBus` (EventEmitter + ring buffer 200 событий). Orchestrator эмитит `plan | step_start | step_complete | step_fail | step_skip | validation_* | commit | done`. `GET /task/:id/stream` — SSE с replay history → live → close. Heartbeat 15с.
+
+## v1.4 — Live indexing
+
+FileWatcher (chokidar) с дебаунсом 1500ms — автопереиндексация при сохранении в IDE. Очистка удалённых файлов из CodeGraph + VectorStore (`HNSW.markDelete`) + file_hashes. `WATCH_ENABLED=true` flag.
+
+## v1.3 — Resilient orchestration
+
+Per-step error recovery — упавший шаг не убивает задачу. DAG-aware skip — шаги с упавшими зависимостями автоматически пропускаются. Partial completion в `tasks.result`. ADR + failure pattern на каждый сбой.
+
+## v1.2 — Качество агентов
+
+TestRunner (`npm test` после write с таймаутом). TypeChecker (`tsc --noEmit`). Validation loop в Orchestrator — Fixer получает реальные ошибки tsc/тестов. Embedding cache в SQLite (sha1 dedup).
+
+## v1.1 — Reliability baseline
+
+Zod-валидация вывода всех агентов (защита от кривого JSON от LLM). VectorStore async mutex + атомарная запись (.tmp + rename). Promise.allSettled в RAG loader. SQLite close() при graceful shutdown. validateConfig() при старте. vitest + 35 тестов. Инкрементальная индексация (SHA-1 хеши). MCP runtime-валидация. Fastify bodyLimit (64KB) + rate-limit (60 req/min).
+
+## v1.0 — Foundation (Iter 0–3)
+
+**Iter 0:** Turborepo monorepo, 12 пакетов, package.json/tsconfig/turbo.json, npm install + npm run build clean.
+**Iter 1:** Core — shared/types/config/logger; OllamaClient (`/api/chat`, `/api/embeddings`, healthCheck); MemoryStore (SQLite, tasks/adr/failures); SafeWriter + BackupManager + DiffEngine; MemoryQueue + JobWorker (graceful shutdown); Fastify API (/health, /task, /task/:id, /tasks).
+**Iter 2:** RAG Engine — ASTParser (TS Compiler API: function/class/interface/type), CodeGraph с персистентностью; VectorStore (HNSW, cosine, labelMap); GraphRetriever (embed → search → 1-hop deps → token-bounded context); подключение к Orchestrator.
+**Iter 3:** MCP server — stdio transport, 7 tools (index_codebase, search_code, get_related_code, run_task, get_task_status, list_decisions, add_decision); .vscode/mcp.json + .roo/mcp.json.

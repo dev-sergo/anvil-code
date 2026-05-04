@@ -55,6 +55,7 @@
 - [Конфигурация](#конфигурация)
 - [API Reference](#api-reference)
 - [Интеграция с VSCode](#интеграция-с-vscode)
+- [Документирование итераций](#документирование-итераций)
 - [Известные ограничения и план доработок](#известные-ограничения-и-план-доработок)
 
 ---
@@ -419,6 +420,24 @@ GET http://localhost:3000/task/1713312000000
 - Подписывается на SSE-стрим задачи (`GET /task/:id/stream`)
 - Показывает прогресс в Sidebar
 - Открывает diff-preview при завершении
+
+---
+
+## Документирование итераций
+
+Каждая итерация проходит через 4 артефакта:
+
+| Артефакт | Что туда | Когда |
+|---|---|---|
+| **[docs/designs/](docs/designs/)** | Pre-impl design doc (TL;DR / Goals / Architecture / Phases / AC) — шаблон [_template.md](docs/designs/_template.md) | ДО первого коммита кода — для итераций ETA > 1 день или с архитектурным сдвигом |
+| **Implementation** | Код в `packages/*` + unit-тесты | — |
+| **[docs/benchmarks/runs/](docs/benchmarks/runs/)** | Post-impl bench (configuration, scores, what worked/broke) — шаблон [_template.md](docs/benchmarks/runs/_template.md) | После каждой итерации с поведенческим изменением |
+| **[CHANGELOG.md](CHANGELOG.md)** | Append-only chronological log; 1 запись на версию (5-15 строк), ссылки на design + bench | После закрытия итерации |
+| **[ROADMAP.md](ROADMAP.md)** | Текущее состояние + next 2-3 итерации (~250 строк, не больше) | Tick checkbox + дата при каждой итерации |
+
+**Правило:** если итерация требует design-doc, то его файл создаётся **до** первого коммита кода. Дата создания в git log — это точка «начали». Бенчмарк-файл — точка «закрыли».
+
+Подробности lifecycle и triggers для design-doc — в [ROADMAP.md → Документация и workflow](ROADMAP.md#документация-и-workflow).
 
 ---
 

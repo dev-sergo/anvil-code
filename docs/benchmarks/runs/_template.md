@@ -7,11 +7,17 @@
 | Date | YYYY-MM-DD |
 | rag-system revision | `git rev-parse --short HEAD` |
 | Iteration tag | v1.X (what this run tests) |
-| LARGE model | `OLLAMA_MODEL_LARGE=...` |
-| SMALL model | `OLLAMA_MODEL_SMALL=...` |
+| LLM_BACKEND | llamacpp / ollama |
+| LLM_URL | `http://172.20.10.4:8080` (llamacpp) / `http://172.20.10.4:11434` (ollama) |
+| LLM_LARGE_MODEL | `qwen-coder-long` / `coder` / `qwen-coder` / ... |
+| LLM_SMALL_MODEL | `qwen3` / `qwen` / ... |
+| EMBED_BACKEND | llamacpp / ollama (default = LLM_BACKEND) |
+| EMBED_MODEL | `embed` (nomic-embed-text-v1.5, 768 dim) |
+| TOOL_CALLING_CODER | true / false |
 | TESTER_ENABLED | true / false |
 | PLANNER_MAX_STEPS | N |
 | Other ENV diffs from default | ... |
+| Sandbox / target | `/Users/admin/Documents/work/rag-system-sandbox` / `rag-system-target` (91 файл) / другое |
 | Cumulative? | no (each task on clean main) / yes (chained) |
 
 ## Tasks
@@ -22,8 +28,10 @@
 |---|---|
 | Plan size | N step(s) |
 | Files touched | path/a, path/b |
+| Tool calls (Coder) | N |
+| Tool calls (Fixer) | N |
 | Validation | pass / fail / skipped |
-| Commit | yes / commit_skipped |
+| Commit | yes / commit_skipped / commit_partial |
 | Wall time | Nm Ns |
 
 **Diff highlights:**
@@ -50,6 +58,8 @@
 | Tasks attempted | N |
 | Green commits | N |
 | Validation pass rate | N/N |
+| Pathology bails (Coder) | N |
+| Pathology bails (Fixer) | N |
 | Run score (avg) | N/10 |
 
 ## What worked
