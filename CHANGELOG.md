@@ -6,6 +6,17 @@
 
 ---
 
+## v1.32-c.1 — no-progress nudge before done() (2026-05-05) — Phase 3 fully closed
+
+Перехват преждевременного `done()` в `runTaskAgent`: когда `successfulEdits === 0` (loop видел только errors + read_file), одно `NO_PROGRESS_NUDGE` сообщение блокирует выход и предлагает `replace_in_file` fallback. Вторая попытка `done()` всегда пропускается (cap=1). **+6 unit-tests, 499/499 (было 445+54).** Также: `llamaswap-client.ts` — добавлен `max_tokens: 4096` во все три request bodies (defensive fix для thinking-mode моделей вроде qwen3).
+
+**Re-bench v1.32-c.1 (2026-05-05, qwen3 Planner + qwen-coder-long Coder/Fixer):**
+- L1.1 ×3 = **3/3** ✅ (было 2/3; nudge fired on r1: Coder intercepted add_route error → committed via server.ts)
+- L4.1 ×3 valid = **3/3** ✅ (было 3/5=60%; nudge fired all 3: Fixer → byte-perfect fix each)
+- L3.1 ×1 = **byte-perfect**, 61s (no regression)
+- Design: [v1.32-c.1-no-progress-nudge.md](docs/designs/v1.32-c.1-no-progress-nudge.md)
+- Bench: [2026-05-05-v1.32-c.1-no-progress-nudge.md](docs/benchmarks/runs/2026-05-05-v1.32-c.1-no-progress-nudge.md)
+
 ## v1.32-d — llama-swap backend swap (2026-05-02) — Phase 3 closure
 
 Замена `OllamaClient` на `LlamaSwapClient` (OpenAI-compatible API), default `LLM_BACKEND=llamacpp`. Ollama сохранён как fallback. **Phase E bench:** L1.1 ×4 (3/3 commits, mean 101s, ~50% faster than Ollama), L4.1 ×3 (1/3 clean fix, parity). **Phase F flipped:** `LLM_BACKEND=llamacpp`, `LLM_LARGE_MODEL=qwen-coder-long` (16K), `TOOL_CALLING_CODER=true` дефолты. **+34 unit-tests, 445/445.**
@@ -16,13 +27,15 @@
 
 ## v1.32-c — Task-agents over shared loop (Phase A+C, 2026-05-02)
 
-Унифицированный `runTaskAgent(spec, input)` loop в [packages/agents/src/task-agents/](packages/agents/src/task-agents/) с тремя specs: `FEATURE_SPEC`, `BUGFIX_SPEC`, `REFACTOR_SPEC`. Specialization через prompts + tool selection, не отдельные классы. Phase B+D частично закрыта в v1.32-d (sub-agents tool dispatch).
+Унифицированный `runTaskAgent(spec, input)` loop в [packages/agents/src/task-agents/](packages/agents/src/task-agents/) с тремя specs: `FEATURE_SPEC`, `BUGFIX_SPEC`, `REFACTOR_SPEC`. Specialization через prompts + tool selection, не отдельные классы. Phase B (bench) выполнена retro-active 2026-05-04: **L1.1 ×3 = 2/3, L3.1 ×3 = 3/3 byte-perfect, L4.1 ×5 = 3/5 (все 3 commits byte-perfect, healthy median ~3× быстрее v1.32-d)**. AC4 met; AC3+AC5 commit-rate 1 short — surface'или **done-after-structural-error pattern** → tractable v1.32-c.1 follow-up.
 - **Design:** [v1.32-c-sub-agents.md](docs/designs/v1.32-c-sub-agents.md)
+- **Bench:** [2026-05-04-v1.32-c-task-agents.md](docs/benchmarks/runs/2026-05-04-v1.32-c-task-agents.md)
 
 ## v1.32-a.6 — Prettier post-step (2026-04-30)
 
-`prettier --write` запускается на `writtenFiles` после validation pass и до commit. **Cosmetics-only — никогда не блокирует commit.** Детект через `.prettierrc*` / `prettier.config.*` / package.json `"prettier"` field; только локальный `node_modules/.bin/prettier`, никаких npx fallback. **+15 тестов, 441/441.**
+`prettier --write` запускается на `writtenFiles` после validation pass и до commit. **Cosmetics-only — никогда не блокирует commit.** Детект через `.prettierrc*` / `prettier.config.*` / package.json `"prettier"` field; только локальный `node_modules/.bin/prettier`, никаких npx fallback. **+15 тестов, 441/441.** Empirical verify (retro-active 2026-05-04, prettier-configured sandbox): wiring fired 3/3 commits, no wall-time regression, no failure modes triggered.
 - **Атакует:** v1.32-a.4 finding — 4/5 runs landed с cosmetic style noise (indent, blank lines, trailing commas)
+- **Bench:** [2026-05-04-v1.32-a.6-prettier.md](docs/benchmarks/runs/2026-05-04-v1.32-a.6-prettier.md)
 
 ## v1.32-a.5 — Coder/Fixer pathology guard (2026-04-30)
 

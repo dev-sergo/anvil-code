@@ -216,6 +216,161 @@ describe.each<[string, TaskAgentSpec]>([
   });
 });
 
+describe('runTaskAgent — v1.32-c.1 no-progress nudge before done()', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'no-progress-nudge-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function buildTrackingRouter(responses: Array<{ content: string; toolCalls?: unknown[] }>) {
+    let i = 0;
+    const seenMessages: ToolLoopMessage[][] = [];
+    const router = {
+      routeWithTools: async (_role: unknown, msgs: ToolLoopMessage[]) => {
+        seenMessages.push(JSON.parse(JSON.stringify(msgs)) as ToolLoopMessage[]);
+        const r = responses[Math.min(i, responses.length - 1)];
+        i++;
+        return { content: r.content, toolCalls: r.toolCalls, model: 'fake' };
+      },
+    } as never;
+    return { router, seenMessages, callCount: () => i };
+  }
+
+  const NUDGE_SUBSTR = 'You called done() with 0 successful edits';
+
+  it('intercepts done() with 0 successful edits, pushes nudge, allows second done() to exit', async () => {
+    const { router, seenMessages, callCount } = buildTrackingRouter([
+      { content: '', toolCalls: [{ function: { name: 'done', arguments: {} } }] },
+      { content: '', toolCalls: [{ function: { name: 'done', arguments: {} } }] },
+    ]);
+    const result = await runTaskAgent(
+      FEATURE_SPEC,
+      { stepDescription: 'add a /version endpoint to src/server.ts', context: '', taskMode: 'balanced' },
+      router,
+      tmpDir,
+    );
+    expect(result.files).toEqual([]);
+    expect(callCount()).toBe(2);
+    const round2 = seenMessages[1];
+    const last = round2[round2.length - 1];
+    expect(last.role).toBe('user');
+    expect(String(last.content)).toContain(NUDGE_SUBSTR);
+  });
+
+  it('does NOT fire nudge when a successful edit was made before done()', async () => {
+    const { router, seenMessages, callCount } = buildTrackingRouter([
+      {
+        content: '',
+        toolCalls: [
+          { function: { name: 'create_file', arguments: { path: 'src/added.ts', content: 'export const X = 1;\n' } } },
+          { function: { name: 'done', arguments: {} } },
+        ],
+      },
+    ]);
+    const result = await runTaskAgent(
+      FEATURE_SPEC,
+      { stepDescription: 'create src/added.ts', context: '', taskMode: 'balanced' },
+      router,
+      tmpDir,
+    );
+    expect(result.files.length).toBeGreaterThan(0);
+    expect(callCount()).toBe(1);
+    const allMsgs = seenMessages.flat();
+    expect(allMsgs.some(m => String(m.content).includes(NUDGE_SUBSTR))).toBe(false);
+  });
+
+  it('read_file does not count as a successful edit — done after read_file alone fires the nudge', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'present.ts'), 'export const X = 1;\n');
+    const { router, callCount } = buildTrackingRouter([
+      {
+        content: '',
+        toolCalls: [
+          { function: { name: 'read_file', arguments: { path: 'present.ts' } } },
+          { function: { name: 'done', arguments: {} } },
+        ],
+      },
+      { content: '', toolCalls: [{ function: { name: 'done', arguments: {} } }] },
+    ]);
+    await runTaskAgent(
+      FEATURE_SPEC,
+      { stepDescription: 'inspect present.ts', context: '', taskMode: 'balanced' },
+      router,
+      tmpDir,
+    );
+    expect(callCount()).toBe(2);
+  });
+
+  it('error tool result does not count as a successful edit — done after error fires the nudge', async () => {
+    const { router, seenMessages, callCount } = buildTrackingRouter([
+      {
+        content: '',
+        toolCalls: [
+          { function: { name: 'replace_in_file', arguments: { path: 'src/missing.ts', start_line: 1, end_line: 1, new_text: 'X' } } },
+          { function: { name: 'done', arguments: {} } },
+        ],
+      },
+      { content: '', toolCalls: [{ function: { name: 'done', arguments: {} } }] },
+    ]);
+    await runTaskAgent(
+      FEATURE_SPEC,
+      { stepDescription: 'edit src/missing.ts', context: '', taskMode: 'balanced' },
+      router,
+      tmpDir,
+    );
+    expect(callCount()).toBe(2);
+    const round2 = seenMessages[1];
+    expect(round2.some(m => m.role === 'user' && String(m.content).includes(NUDGE_SUBSTR))).toBe(true);
+  });
+
+  it('nudge fires at most once per runTaskAgent — second 0-edit done() exits cleanly', async () => {
+    let beyondTwo = 0;
+    const router = {
+      routeWithTools: async () => {
+        beyondTwo++;
+        return {
+          content: '',
+          toolCalls: [{ function: { name: 'done', arguments: {} } }],
+          model: 'fake',
+        };
+      },
+    } as never;
+    await runTaskAgent(
+      FEATURE_SPEC,
+      { stepDescription: 'noop', context: '', taskMode: 'balanced' },
+      router,
+      tmpDir,
+    );
+    expect(beyondTwo).toBe(2);
+  });
+
+  it('successful edit after nudge → next done() exits without firing nudge a second time', async () => {
+    const { router, seenMessages, callCount } = buildTrackingRouter([
+      { content: '', toolCalls: [{ function: { name: 'done', arguments: {} } }] },
+      {
+        content: '',
+        toolCalls: [
+          { function: { name: 'create_file', arguments: { path: 'src/x.ts', content: 'export const X = 1;\n' } } },
+          { function: { name: 'done', arguments: {} } },
+        ],
+      },
+    ]);
+    const result = await runTaskAgent(
+      FEATURE_SPEC,
+      { stepDescription: 'create src/x.ts after nudge', context: '', taskMode: 'balanced' },
+      router,
+      tmpDir,
+    );
+    expect(result.files.length).toBeGreaterThan(0);
+    expect(callCount()).toBe(2);
+    const allMsgs = seenMessages.flat();
+    const nudgeCount = allMsgs.filter(m => String(m.content).includes(NUDGE_SUBSTR)).length;
+    expect(nudgeCount).toBe(1);
+  });
+});
+
 describe('runTaskAgent — pruneHistory only fires for specs that opt in', () => {
   let tmpDir: string;
   beforeEach(() => {

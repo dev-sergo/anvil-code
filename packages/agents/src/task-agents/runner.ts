@@ -16,6 +16,19 @@ import { pruneHistory } from '../tool-calling-fixer.js';
 import type { TaskAgentSpec, TaskAgentInput, TaskAgentOutput } from './spec.js';
 
 /**
+ * v1.32-c.1 — no-progress nudge. When the model calls done() with 0 successful
+ * tool effects so far, this nudge is pushed once before allowing exit. Surfaces
+ * the structural-first → done()-after-error bail observed on bench L1.1 #3 +
+ * L4.1 #1/#2 (run 2026-05-04). Capped at 1 firing per runTaskAgent invocation.
+ */
+export const NO_PROGRESS_NUDGE =
+  'You called done() with 0 successful edits — only errors so far. Don\'t give up after one structural-tool error. Common recoveries:\n' +
+  '- Try replace_in_file with explicit start_line/end_line/new_text on the target file (line numbers shift after edits — read_file first to confirm current content).\n' +
+  '- If add_route errored "no Fastify route calls in file", the route lives in a different file (e.g. routes/users.ts) — read that file and add the route there.\n' +
+  '- If replace_method errored "class X not found", the target may be a const object literal — use replace_in_file on the relevant lines instead.\n' +
+  'Only call done() once you have at least one successful tool result.';
+
+/**
  * Shared tool-calling loop. v1.32-c replaces the duplicate Coder + Fixer
  * loops with this single implementation; behavior per kind is configured by
  * the supplied spec (FEATURE_SPEC / BUGFIX_SPEC / REFACTOR_SPEC).
@@ -57,6 +70,8 @@ export async function runTaskAgent(
   let lastErrorFingerprint = '';
   let pathologyStrikes = 0;
   let pathologyBail = false;
+  let successfulEdits = 0;
+  let noProgressNudgeFired = false;
   const emittedFilesByPath = new Set<string>();
 
   for (let round = 0; round < spec.maxToolCalls && !doneCalled; round++) {
@@ -117,6 +132,12 @@ export async function runTaskAgent(
       } else {
         consecutiveSameToolErrors = 0;
         lastErrorFingerprint = '';
+        // v1.32-c.1: count tool calls that produced real file effects.
+        // read_file and done don't count; everything else (replace_in_file,
+        // create_file, add_route, replace_method, ... + delete_file) does.
+        if (call.function.name !== 'read_file' && call.function.name !== 'done') {
+          successfulEdits++;
+        }
       }
 
       if (ctx) {
@@ -161,6 +182,18 @@ export async function runTaskAgent(
       }
 
       if (result.done) {
+        // v1.32-c.1: intercept premature done() — model bailing after errors
+        // without having made any successful edit. Nudge once, allow exit on
+        // second done() (legitimate give-up).
+        if (successfulEdits === 0 && !noProgressNudgeFired) {
+          messages.push({ role: 'user', content: NO_PROGRESS_NUDGE });
+          noProgressNudgeFired = true;
+          logger.info(
+            { agent: spec.agentName, toolCalls: toolCallsExecuted },
+            `${spec.agentName} no-progress nudge: blocked premature done()`,
+          );
+          break;
+        }
         doneCalled = true;
         break;
       }

@@ -4,10 +4,10 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.32-d closed — Phase 3 architectural closure.
+**Статус:** 🟢 Phase 3 fully closed (v1.32-c.1 2026-05-05: done-after-error nudge — L1.1 3/3 ✅, L4.1 3/3 ✅, L3.1 spot-check ✅).
 **Backend:** llama-swap (operator's proxy на `172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 445/445 unit-tests, 12/12 пакетов собираются чисто.
-**Последнее обновление:** 2026-05-04.
+**Тесты:** 499/499 unit-tests, 12/12 пакетов собираются чисто.
+**Последнее обновление:** 2026-05-05.
 
 ---
 
@@ -40,16 +40,25 @@
 - ✅ llama-swap backend swap (v1.32-d) — `LLM_BACKEND=llamacpp` дефолт, ~50% быстрее Ollama baseline
 - ✅ Task-agents (v1.32-c) — FEATURE/BUGFIX/REFACTOR specs над unified loop
 
-**Бенчмарк baseline (v1.32-d, qwen-coder-long 16K):**
-- L1.1 atomic — deterministic 10/10
-- L4.1 navigational bug-fix — first end-to-end committed (v1.32-a.3, ~7 min)
+**Бенчмарк baseline (v1.32-c retro, qwen-coder-long 16K, [run](docs/benchmarks/runs/2026-05-04-v1.32-c-task-agents.md)):**
+- L1.1 atomic (FEATURE_SPEC) ×3 — 2/3 commits (1 fail = done-after-structural-error)
+- L3.1 refactor (REFACTOR_SPEC) ×3 — 3/3 byte-perfect, mean 51s
+- L4.1 bug-fix (BUGFIX_SPEC) ×5 — 3/5 commits (3/3 byte-perfect), healthy median 105s vs v1.32-d 5:49 (~3× faster)
 - Cumulative state — регрессирует на всех локальных моделях (фундаментальное ограничение, не лечится prompt'ами)
 
 ---
 
 ## Next 2–3 iterations (по приоритету)
 
-### Phase 4 — Storage & retrieval upgrade (📋 next, главная атака на «сотни файлов»)
+### v1.32-c.1 — done-after-error nudge (✅ 2026-05-05) — Phase 3 fully closed
+
+- [x] NO_PROGRESS_NUDGE в `runTaskAgent`: intercept `done()` при 0 successful edits, cap=1 nudge/loop
+- [x] +6 unit-tests, 499/499
+- [x] Re-bench: L1.1 3/3 ✅ (было 2/3), L4.1 3/3 ✅ (было 3/5), L3.1 byte-perfect ✅
+- [x] **Design:** [docs/designs/v1.32-c.1-no-progress-nudge.md](docs/designs/v1.32-c.1-no-progress-nudge.md)
+- [x] **Bench:** [2026-05-05-v1.32-c.1-no-progress-nudge.md](docs/benchmarks/runs/2026-05-05-v1.32-c.1-no-progress-nudge.md)
+
+### Phase 4 — Storage & retrieval upgrade (📋 после v1.32-c.1, главная атака на «сотни файлов»)
 
 Все три — независимые, можно делать параллельно. ROI измеряется на rag-system-target (91 файл) + крупных open-source TS репо.
 
@@ -131,7 +140,7 @@
 
 - **История:** [CHANGELOG.md](CHANGELOG.md) (полный архив v1.0 → v1.32-d)
 - **Design docs:** [docs/designs/](docs/designs/)
-- **Bench runs:** [docs/benchmarks/runs/](docs/benchmarks/runs/) (23 файла, 2026-04-27 → 2026-05-02)
+- **Bench runs:** [docs/benchmarks/runs/](docs/benchmarks/runs/) (26 файлов, 2026-04-27 → 2026-05-05)
 - **Bench methodology:** [docs/benchmarks/README.md](docs/benchmarks/README.md), [tasks.md](docs/benchmarks/tasks.md)
 - **llama-swap reference:** [docs/llama-api-reference.md](docs/llama-api-reference.md)
 - **LLM tools survey:** [docs/llm-tools-and-practices.md](docs/llm-tools-and-practices.md)

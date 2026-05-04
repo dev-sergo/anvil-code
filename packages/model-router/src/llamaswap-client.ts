@@ -86,6 +86,7 @@ export class LlamaSwapClient implements ModelBackend {
       model,
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       stream: false,
+      max_tokens: 4096,
       ...(options.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     };
@@ -116,6 +117,7 @@ export class LlamaSwapClient implements ModelBackend {
       model,
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       stream: true,
+      max_tokens: 4096,
       ...(options.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     };
@@ -214,6 +216,7 @@ export class LlamaSwapClient implements ModelBackend {
       }),
       tools,
       stream: false,
+      max_tokens: 4096,
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     };
 
