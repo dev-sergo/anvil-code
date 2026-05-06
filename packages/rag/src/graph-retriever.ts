@@ -110,8 +110,26 @@ export class GraphRetriever {
       return [];
     }
 
-    const results = await this.vectorStore.search(queryVector, k);
-    if (results.length === 0) return [];
+    const useReranker = config.rag.rerankerEnabled && typeof this.embedClient.rerank === 'function';
+    const candidateCount = useReranker ? config.rag.rerankerCandidates : k;
+
+    const candidates = await this.vectorStore.search(queryVector, candidateCount);
+    if (candidates.length === 0) return [];
+
+    let results = candidates;
+    if (useReranker) {
+      const symbols = candidates.map(c => this.codeGraph.getSymbol(c.id));
+      const docs = symbols.map(s => s ? `${s.kind} ${s.name}: ${s.text}`.slice(0, 400) : '');
+      try {
+        const ranked = await this.embedClient.rerank!(query, docs);
+        results = ranked.slice(0, k).map(r => candidates[r.index]);
+        logger.debug({ candidates: candidates.length, reranked: results.length }, 'RAG reranker applied');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.warn({ error: msg }, 'Reranker failed, falling back to HNSW order');
+        results = candidates.slice(0, k);
+      }
+    }
 
     const items: ContextItem[] = [];
     let tokenEstimate = 0;

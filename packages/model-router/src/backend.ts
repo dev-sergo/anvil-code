@@ -4,6 +4,11 @@ import type { GenerateOptions, ToolCallResponse, ToolDefinition, ToolLoopMessage
 import { OllamaClient } from './ollama-client.js';
 import { LlamaSwapClient } from './llamaswap-client.js';
 
+export interface RerankResult {
+  index: number;
+  relevanceScore: number;
+}
+
 /**
  * Common chat-completion + embedding contract that both backends implement.
  * v1.32-d introduces this seam so `ModelRouter` can dispatch to either Ollama
@@ -36,6 +41,13 @@ export interface ModelBackend {
 
   /** Compute a single text embedding. Returns the embedding vector. */
   embed(text: string, model?: string): Promise<number[]>;
+
+  /**
+   * Re-rank documents against a query. Returns results sorted DESC by relevance score.
+   * Optional — only LlamaSwapClient implements this; Ollama path leaves it undefined.
+   * Callers must guard with `backend.rerank?.(...)`.
+   */
+  rerank?(query: string, documents: string[], model?: string): Promise<RerankResult[]>;
 
   /** Returns true if the backend is reachable (typically a `/health` ping with timeout). */
   healthCheck(): Promise<boolean>;

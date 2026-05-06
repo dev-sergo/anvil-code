@@ -39,6 +39,7 @@ export const config = {
     modelLargeLong: env('LLM_LARGE_LONG_MODEL', 'qwen-coder-long'),
     modelSmall: env('LLM_SMALL_MODEL', 'qwen3'),
     modelEmbed: env('LLM_EMBED_MODEL', 'embed'),
+    modelRerank: env('LLM_RERANK_MODEL', 'reranker'),
   },
   api: {
     port: envInt('API_PORT', 3000),
@@ -66,6 +67,8 @@ export const config = {
     graphsPath: env('GRAPHS_PATH', 'data/graphs'),
     embedConcurrency: Math.max(1, envInt('EMBED_CONCURRENCY', 8)),
     fileConcurrency: Math.max(1, envInt('FILE_CONCURRENCY', 4)),
+    rerankerEnabled: envBool('RAG_RERANKER_ENABLED', false),
+    rerankerCandidates: Math.max(1, envInt('RAG_RERANKER_CANDIDATES', 30)),
   },
   watcher: {
     enabled: envBool('WATCH_ENABLED', false),

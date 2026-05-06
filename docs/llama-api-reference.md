@@ -16,6 +16,7 @@ Server: `http://172.20.10.4:8080`
 | `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k-q8-0-kv-t07` | `gemma`, `long-context` | Long context 32K, fast MoE |
 | `qwen3-6-35b-a3b-ud-q4-k-m-ctx-16k-q8-0-kv-t07` | `qwen3`, `moe` | Fastest MoE (3B active) |
 | `meta-llama-3-1-70b-instruct-q4-k-m-ctx-4k-q4-0-kv-t07` | `llama70` | Best quality, ~3-5 t/s |
+| `bge-reranker-v2-m3-q4-k-m-ctx-512` | `reranker` | Cross-encoder reranker, ~418 MB, `--reranking` mode |
 
 > Aliases работают только если объявлены в config.yaml. Полные имена работают всегда.
 
@@ -46,6 +47,22 @@ curl -s $LLM/running | jq
 # Token usage / latency metrics
 curl -s $LLM/api/metrics | jq
 ```
+
+---
+
+## Reranking
+
+```bash
+curl -s -X POST $LLM/v1/rerank \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "reranker",
+    "query": "add health endpoint",
+    "documents": ["function getHealth()", "function createUser()", "const router = express.Router()"]
+  }' | jq
+```
+
+Response: `results[{index, relevance_score}]` — higher score = more relevant (scores are negative logits, closer to 0 = better).
 
 ---
 

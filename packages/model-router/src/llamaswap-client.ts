@@ -1,7 +1,7 @@
 import { config, logger } from '@rag-system/shared';
 import type { AgentMessage } from '@rag-system/shared';
 import type { GenerateOptions, ToolCallResponse, ToolDefinition, ToolLoopMessage } from './types.js';
-import type { ModelBackend } from './backend.js';
+import type { ModelBackend, RerankResult } from './backend.js';
 import { extractInlineToolCalls } from './shared-helpers.js';
 
 /**
@@ -313,6 +313,31 @@ export class LlamaSwapClient implements ModelBackend {
     // Server is allowed to reorder via `index`; sort defensively before returning.
     const sorted = [...data.data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
     return sorted.map(e => e.embedding);
+  }
+
+  async rerank(query: string, documents: string[], model?: string): Promise<RerankResult[]> {
+    if (documents.length === 0) return [];
+    const rerankModel = model ?? config.llamacpp.modelRerank;
+
+    const res = await fetch(`${this.baseUrl}/v1/rerank`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: rerankModel, query, documents }),
+    });
+
+    if (!res.ok) {
+      const raw = await res.text();
+      throw new Error(`llama-swap /v1/rerank ${res.status}: ${raw}`);
+    }
+
+    const data = await res.json() as { results: Array<{ index: number; relevance_score: number }> };
+    if (!Array.isArray(data.results)) {
+      throw new Error('llama-swap /v1/rerank returned no results');
+    }
+
+    return data.results
+      .map(r => ({ index: r.index, relevanceScore: r.relevance_score }))
+      .sort((a, b) => b.relevanceScore - a.relevanceScore);
   }
 
   async healthCheck(): Promise<boolean> {
