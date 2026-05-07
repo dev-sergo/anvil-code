@@ -6,6 +6,14 @@
 
 ---
 
+## v1.34.1 — Release prep: BUGFIX_SPEC fix + GitHub docs + .vsix (2026-05-08)
+
+BUGFIX_SPEC `WORKFLOW` шаг 2 расширен до 4-шагового алгоритма для тест-фейлов: (a) читаем тест → (b) идём по импортам → (c) ищем object literal → (d) добавляем **значение** (`field: value`), а не тип-аннотацию. Новый паттерн в `COMMON TS PATTERNS`: `as SomeType` не добавляет данные — только `field: value` в литерале. Адресует L4.1 r1 регрессию (Coder писал `} as User` без `createdAt`, Fixer в 3-х попытках повторял ту же аннотацию). **530/530 тестов (без изменений).**
+
+GitHub docs: README переписан на английский (user-facing: what it does, one-paragraph architecture, llama-swap quickstart, known limitations). Добавлены `LICENSE` (MIT) и `CONTRIBUTING.md`. Extension package.json: добавлены `repository` и `license` поля. `packages/vscode-extension/LICENSE` добавлен. `*.vsix` в `.gitignore`.
+
+.vsix: `npm run build` + `vsce package` — 29KB, 18 файлов, 0 предупреждений. Установлен через `code --install-extension`. Бандл верифицирован (все ключевые символы присутствуют).
+
 ## v1.34 — Hybrid search: BM25 + dense RRF (2026-05-08) — Phase 4 вторая итерация
 
 Pure-TS `BM25Index` (k1=1.5, b=0.75) поверх symbol bodies + path components. RRF merge (`k=60`) dense + BM25 в `GraphRetriever.retrieveContextItems()`. Kill-switch `RAG_BM25_ENABLED` (default true), `RAG_BM25_CANDIDATES` (default 30). `indexCodebase` исключает `data/backups/**`. `loadFromDisk` перестраивает BM25 из CodeGraph (no extra persistence). `chat_template_kwargs: {enable_thinking: false}` во все LlamaSwapClient request bodies (Qwen3 fix). `interceptToolCall` hook в BUGFIX_SPEC — hard veto `create_file` на test paths (L4.1 Fixer regression fix). `git-engine` теперь использует `config.git.defaultBranch` вместо hardcoded `'main'`. **+16 BM25 unit-tests + 5 interceptToolCall tests, 530/530 (было 507).**
