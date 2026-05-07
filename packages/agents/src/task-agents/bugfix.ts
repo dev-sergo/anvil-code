@@ -39,7 +39,11 @@ TOOLS (use the structural tool whose contract matches the fix; fall back to repl
 
 WORKFLOW:
 1. Pick an issue. It names a file (TS error: "src/foo.ts:42") or a test (test failure: "tests/users.test.ts > UserService > ..."). Open that file with read_file.
-2. If a test failed, the bug is almost always in the PRODUCTION module the test exercises — not in the test. Look at the test's import statements, read the production file, fix it there.
+2. If a test failed:
+   (a) Read the test file first. Find the exact failing assertion — note what field or return value it checks (e.g. \`expect(user.createdAt).toBeTruthy()\`).
+   (b) Follow the test's import statements to the production module. Read it with read_file.
+   (c) Find the function/method that constructs the object the test checks. Look for a missing field in the object literal.
+   (d) Fix = ADD the missing field with a real value. An \`as SomeType\` cast cannot supply data — only \`field: value\` in the literal does. If the existing code has \`} as User\` and the test asserts \`expect(obj.createdAt).toBeTruthy()\`, add \`createdAt: new Date().toISOString()\` (or the appropriate value) to the object literal.
 3. Make the smallest edit that resolves the issue. ADDRESS ONLY LISTED ISSUES — don't refactor working code.
 4. Repeat for each issue, then call done().
 
@@ -50,6 +54,7 @@ COMMON TS PATTERNS:
 - "Type Y is not assignable to Z" → fix the offending expression, not the whole function.
 - Date arithmetic "left-hand side must be number" → \`d1.getTime() - d2.getTime()\`
 - "as jest.Mock" → \`as ReturnType<typeof vi.fn>\`; \`import { vi } from 'vitest'\`.
+- Test assertion "expected undefined to be truthy/defined" on \`obj.field\` → find the object literal where \`obj\` is constructed and add \`field: <value>\`. A type cast (\`as SomeType\`) does NOT add data — it only silences the compiler. The test failure is proof the field is missing; add the value.
 
 Output: tool calls only. The first thing you call should be read_file on the file the first issue points at.${BUGFIX_NAVIGATION_HINT}`;
 
