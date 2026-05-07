@@ -6,6 +6,18 @@
 
 ---
 
+## v1.34 — Hybrid search: BM25 + dense RRF (2026-05-08) — Phase 4 вторая итерация
+
+Pure-TS `BM25Index` (k1=1.5, b=0.75) поверх symbol bodies + path components. RRF merge (`k=60`) dense + BM25 в `GraphRetriever.retrieveContextItems()`. Kill-switch `RAG_BM25_ENABLED` (default true), `RAG_BM25_CANDIDATES` (default 30). `indexCodebase` исключает `data/backups/**`. `loadFromDisk` перестраивает BM25 из CodeGraph (no extra persistence). `chat_template_kwargs: {enable_thinking: false}` во все LlamaSwapClient request bodies (Qwen3 fix). `interceptToolCall` hook в BUGFIX_SPEC — hard veto `create_file` на test paths (L4.1 Fixer regression fix). `git-engine` теперь использует `config.git.defaultBranch` вместо hardcoded `'main'`. **+16 BM25 unit-tests + 5 interceptToolCall tests, 530/530 (было 507).**
+
+**Bench v1.34 (2026-05-08, sandbox 5 файлов):**
+- L1.1 ×3 = **3/3** ✅ (regression guard; avg 77s; `/health` route correctly placed)
+- L4.1 ×3 = **2/3** ✅ (interceptToolCall сработал — Fixer ни разу не создал тест-файл; r1: incomplete fix — модель добавила type annotation без `createdAt` value → validation loop, no commit)
+- L2.1/L2.2 на target — не запущены (context overflow 91-файлового target'а при 16K лимите; отдельная задача)
+- Infrastructure fixes в этой сессии: bench script field names, Qwen3 thinking mode, git-engine defaultBranch
+- Design: [v1.34-hybrid-search.md](docs/designs/v1.34-hybrid-search.md)
+- Bench: [2026-05-08-v1.34-hybrid-search.md](docs/benchmarks/runs/2026-05-08-v1.34-hybrid-search.md)
+
 ## v1.33 — BGE-reranker two-pass retrieval (2026-05-07) — Phase 4 первая итерация
 
 HNSW(k=30) → BGE-reranker-v2-m3 → top-5 в `GraphRetriever.retrieveContextItems()`. Kill-switch `RAG_RERANKER_ENABLED` (default false). Graceful fallback при reranker error. **+8 unit-tests, 507/507 (было 499).** LlamaSwapClient.rerank() → POST /v1/rerank, сортировка DESC по relevance_score.

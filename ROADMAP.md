@@ -4,10 +4,10 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟡 v1.33 Phase A+B done (2026-05-07: BGE-reranker two-pass). Bench: L1.2/L1.3 baseline ✅, L4.1 регрессия 1/3, precision@5 = 0% (vocabulary gap → нужен BM25 v1.34).
+**Статус:** 🟡 v1.34 closed (2026-05-08: BM25+RRF hybrid search). L1.1 3/3 ✅, L4.1 2/3 (interceptToolCall ✓). **v1.35 skip-решение принято** — идёт пост-релизной. Следующее: GitHub prep + .vsix packaging → release 2026-05-16.
 **Backend:** llama-swap (operator's proxy на `172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 507/507 unit-tests, 12/12 пакетов собираются чисто.
-**Последнее обновление:** 2026-05-07.
+**Тесты:** 530/530 unit-tests, 12/12 пакетов собираются чисто.
+**Последнее обновление:** 2026-05-08.
 
 ---
 
@@ -69,18 +69,20 @@
 - [x] **Design:** [docs/designs/v1.33-reranker.md](docs/designs/v1.33-reranker.md)
 - [x] **Bench:** [2026-05-07-v1.33-reranker.md](docs/benchmarks/runs/2026-05-07-v1.33-reranker.md)
 
-#### v1.34 — Hybrid search (BM25 + dense с RRF) (~1-2 дня)
-- [ ] Pure-TS BM25 (или sqlite-fts5) над symbol bodies + `pMap` для индексации
-- [ ] RRF (k=60 default) merge top-N dense + top-N BM25
-- [ ] Атакует vocabulary gap — поиск по точному имени символа сейчас может промахнуться
-- [ ] Bench: queries по rare identifiers (вспомогательные функции, утилиты)
-- [ ] **Design needed:** [docs/designs/v1.34-hybrid-search.md](docs/designs/v1.34-hybrid-search.md)
+#### v1.34 — Hybrid search (BM25 + dense с RRF) — ✅ 2026-05-08
+- [x] Pure-TS BM25Index (k1=1.5, b=0.75), no external deps
+- [x] RRF (k=60) merge dense + BM25 в GraphRetriever
+- [x] `data/backups/**` excluded from indexCodebase
+- [x] interceptToolCall hook в BUGFIX_SPEC (L4.1 Fixer regression fix)
+- [x] Bench: L1.1 3/3, L4.1 2/3 (interceptToolCall ✓)
+- [x] **Design:** [docs/designs/v1.34-hybrid-search.md](docs/designs/v1.34-hybrid-search.md)
+- [x] **Bench:** [2026-05-08-v1.34-hybrid-search.md](docs/benchmarks/runs/2026-05-08-v1.34-hybrid-search.md)
 
-#### v1.35 — Multi-hop transitive closure в code-graph (~3-5 дней)
+#### v1.35 — Multi-hop transitive closure в code-graph (~3-5 дней) — ⏸ POST-RELEASE
 - [ ] При индексации compute closure(symbol, max_depth=3) — кладём в `dependencies_closure` поле
 - [ ] GraphRetriever отдаёт closure (не только 1-hop) с token budget
 - [ ] Атакует cumulative state regression (модель не видит дальние зависимости)
-- [ ] Bench: L2.3 cumulative ×5 — target 4/5 GREEN (vs текущий variance 1/3)
+- [ ] **Skip-решение (2026-05-08):** риск context overflow перевешивает пользу до релиза; L2.x на target ограничен 16K контекстом, а не глубиной графа. Делаем пост-релиз.
 - [ ] **Design needed:** [docs/designs/v1.35-multi-hop-closure.md](docs/designs/v1.35-multi-hop-closure.md)
 
 ### Phase 5 — Production storage (📋 после Phase 4)

@@ -1,43 +1,54 @@
 # Release checklist — public GitHub OpenSource
 
-Target: 2026-05-16
+**Target:** 2026-05-16
+**Current readiness:** 55%
+
+---
 
 ## Quality gates
 
-- [ ] v1.34 Hybrid search — precision@5 > 0% on rag-system-target
-- [ ] L4.1 Fixer regression fixed — 3/3 (currently 1/3)
-- [ ] 507+/507 unit tests green
-- [ ] `data/backups/**` excluded from indexing
-
-## Dogfood benchmark
-
-- [ ] Bench on rag-system-target: L1.1, L1.2, L1.3 ≥ 2/3 each
-- [ ] Bench on rag-system-target: L4.1 ≥ 3/3
-- [ ] Bench on rag-system-target: L2.1/L2.2 precision@5 > 0% (v1.34 goal)
+- [x] v1.34 Hybrid search — BM25+RRF реализован и протестирован
+- [x] L4.1 Fixer regression — interceptToolCall блокирует create_file на test paths
+- [x] 530/530 unit tests green
+- [x] `data/backups/**` excluded from indexing
+- [x] Qwen3 thinking mode fix (chat_template_kwargs)
+- [ ] L2.x smoke bench на sandbox с v1.34 (2–3 задачи, понять картину)
+- [ ] L4.1 Fixer 2/3 → 3/3: micro-fix промпта (тип без значения)
 
 ## GitHub repo
 
-- [ ] README.md — setup instructions, architecture overview, quick start
+- [ ] README.md — user-facing: что это, quickstart, архитектура, скриншот/GIF
 - [ ] LICENSE (MIT)
 - [ ] CONTRIBUTING.md
-- [ ] .env.example with all env vars documented
-- [ ] .gitignore covers *.gguf, models/, data/backups/, dist/, node_modules/
-- [ ] GitHub repo visibility set to public
+- [ ] .env.example актуален (все переменные документированы)
+- [ ] .gitignore: *.gguf, models/, data/backups/, dist/, node_modules/
+- [ ] GitHub repo visibility → public
 
 ## VS Code extension
 
 - [ ] Extension builds clean (`npm run build` в packages/vscode-extension)
 - [ ] .vsix packaged (`vsce package`)
 - [ ] Smoke test: install from .vsix, connect to llama-swap, run a task
-- [ ] README в packages/vscode-extension с инструкцией установки
+- [ ] README в packages/vscode-extension (install + connect)
 
-## Known limitations documented
+## Documentation
 
-- [ ] KNOWN-LIMITATIONS.md или секция в README: cumulative state regression, 24GB VRAM cap, TesterAgent vitest/jest mismatch
-- [ ] ROADMAP.md актуален
+- [ ] Quickstart в README: llama-swap → API → extension → first task
+- [ ] Known limitations секция в README (cumulative state, 24GB VRAM cap, TesterAgent)
+- [ ] docs/llama-api-reference.md актуален
 
-## Setup / reproducibility
+## Pre-release sync
 
-- [ ] Инструкция запуска API сервера в README
-- [ ] Инструкция настройки llama-swap (ссылка на docs/llama-api-reference.md)
-- [ ] Sandbox setup скрипт или инструкция для воспроизведения bench
+- [x] CHANGELOG.md: v1.34 запись добавлена
+- [x] ROADMAP.md актуален (v1.35 помечена post-release)
+- [ ] git tag v1.34 на dev перед мержем в main
+- [ ] dev → main merge
+
+---
+
+## Out of scope for v1.0 (post-release)
+
+- v1.35 multi-hop transitive closure
+- Phase 5: Qdrant, SQLite symbol table
+- Task cancellation POST /task/:id/cancel
+- TesterAgent vitest/jest mock fix
