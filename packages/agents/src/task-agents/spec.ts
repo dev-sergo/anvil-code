@@ -51,4 +51,14 @@ export interface TaskAgentSpec {
 
   pathologyNudge: (toolName: string, filePath: string, threshold: number) => string;
   noToolCallsNudge: (attempt: 1 | 2) => string;
+
+  /**
+   * Optional hard veto on a tool call BEFORE dispatch. Return an error string
+   * to block the call (it is fed back to the model as a tool error); return
+   * null to allow normal dispatch. Runs after policy.forbiddenPatterns but
+   * is independent of the allowlist — use for spec-level invariants that must
+   * never be overrideable via policy.allowed (e.g. Fixer must never create
+   * test files even if a hallucinating Planner names them in the step).
+   */
+  interceptToolCall?: (toolName: string, filePath: string) => string | null;
 }

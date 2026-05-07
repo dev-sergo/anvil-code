@@ -127,4 +127,14 @@ export const BUGFIX_SPEC: TaskAgentSpec = {
     attempt === 1
       ? `You responded with text but did not call any tool. Tools are how fixes happen. Pick the file the first issue references; call read_file on it; then edit. Do that now — no preamble.`
       : `Still no tool call. The validation will not fix itself. The first listed issue points at a file path. Call read_file on that exact path RIGHT NOW. If you genuinely believe no source edit can fix the issues, call done() — but only as a tool call, not as text.`,
+  interceptToolCall: (toolName, filePath) => {
+    if (toolName === 'create_file' && isTestPath(filePath)) {
+      return (
+        `error: Fixer cannot create test files (${filePath}). ` +
+        `The bug is in the production module — find and edit that instead. ` +
+        `Read the failing test's import statements to locate the production file, then call read_file on it.`
+      );
+    }
+    return null;
+  },
 };

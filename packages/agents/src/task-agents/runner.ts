@@ -97,15 +97,18 @@ export async function runTaskAgent(
     messages.push({ role: 'assistant', content: response.content, tool_calls: calls });
 
     for (const call of calls) {
-      const result = dispatchToolCall(call, ws, policy);
+      const argKey = FILE_ARG_KEY[call.function.name] ?? 'path';
+      const callFilePath = String(call.function.arguments[argKey] ?? '');
+      const vetoed = spec.interceptToolCall?.(call.function.name, callFilePath) ?? null;
+      const result = vetoed !== null
+        ? { text: vetoed, done: false }
+        : dispatchToolCall(call, ws, policy);
       toolCallsExecuted++;
       messages.push({ role: 'tool', content: result.text, tool_name: call.function.name });
 
       const isError = result.text.startsWith('error:');
       if (isError) {
-        const argKey = FILE_ARG_KEY[call.function.name] ?? 'path';
-        const fpPath = String(call.function.arguments[argKey] ?? '');
-        const fp = `${call.function.name}:${fpPath}`;
+        const fp = `${call.function.name}:${callFilePath}`;
         if (fp === lastErrorFingerprint) {
           consecutiveSameToolErrors++;
         } else {
@@ -126,7 +129,7 @@ export async function runTaskAgent(
           }
           messages.push({
             role: 'user',
-            content: spec.pathologyNudge(call.function.name, fpPath, PATHOLOGY_THRESHOLD),
+            content: spec.pathologyNudge(call.function.name, callFilePath, PATHOLOGY_THRESHOLD),
           });
         }
       } else {

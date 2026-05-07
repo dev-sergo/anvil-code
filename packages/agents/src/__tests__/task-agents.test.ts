@@ -371,6 +371,77 @@ describe('runTaskAgent — v1.32-c.1 no-progress nudge before done()', () => {
   });
 });
 
+describe('BUGFIX_SPEC — interceptToolCall (L4.1 regression guard)', () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bugfix-intercept-'));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function buildFakeRouter(responses: Array<{ content: string; toolCalls?: unknown[] }>) {
+    let i = 0;
+    return {
+      routeWithTools: async () => {
+        const r = responses[Math.min(i, responses.length - 1)];
+        i++;
+        return { content: r.content, toolCalls: r.toolCalls, model: 'fake' };
+      },
+    } as never;
+  }
+
+  it('interceptToolCall blocks create_file for __tests__ paths — error returned to model', async () => {
+    const seenToolResults: string[] = [];
+    const router = {
+      routeWithTools: async (_role: unknown, msgs: unknown[]) => {
+        const last = (msgs as Array<{ role: string; content: string }>).at(-1);
+        if (last?.role === 'tool') seenToolResults.push(last.content);
+        const alreadyBlocked = seenToolResults.some(r => r.includes('cannot create test files'));
+        return {
+          content: '',
+          toolCalls: alreadyBlocked
+            ? [{ function: { name: 'done', arguments: {} } }]
+            : [{ function: { name: 'create_file', arguments: { path: 'src/__tests__/user-service.test.ts', content: 'test' } } }],
+          model: 'fake',
+        };
+      },
+    } as never;
+
+    const result = await runTaskAgent(
+      BUGFIX_SPEC,
+      { stepDescription: 'fix user-service.ts', context: '', taskMode: 'balanced' },
+      router,
+      tmpDir,
+    );
+
+    expect(result.files).toEqual([]);
+    expect(seenToolResults.some(r => r.includes('cannot create test files'))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'src/__tests__/user-service.test.ts'))).toBe(false);
+  });
+
+  it('interceptToolCall blocks create_file for tests/ paths', async () => {
+    const intercepted = BUGFIX_SPEC.interceptToolCall?.('create_file', 'tests/user.test.ts');
+    expect(intercepted).not.toBeNull();
+    expect(intercepted).toContain('cannot create test files');
+  });
+
+  it('interceptToolCall blocks create_file for .spec.ts paths', async () => {
+    const intercepted = BUGFIX_SPEC.interceptToolCall?.('create_file', 'src/user.spec.ts');
+    expect(intercepted).not.toBeNull();
+  });
+
+  it('interceptToolCall allows create_file for production paths', () => {
+    expect(BUGFIX_SPEC.interceptToolCall?.('create_file', 'src/services/user.ts')).toBeNull();
+    expect(BUGFIX_SPEC.interceptToolCall?.('create_file', 'src/utils/helpers.ts')).toBeNull();
+  });
+
+  it('interceptToolCall allows read_file on test paths (read is always free)', () => {
+    expect(BUGFIX_SPEC.interceptToolCall?.('read_file', 'tests/user.test.ts')).toBeNull();
+    expect(BUGFIX_SPEC.interceptToolCall?.('read_file', 'src/__tests__/user.test.ts')).toBeNull();
+  });
+});
+
 describe('runTaskAgent — pruneHistory only fires for specs that opt in', () => {
   let tmpDir: string;
   beforeEach(() => {
