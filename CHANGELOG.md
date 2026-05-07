@@ -6,6 +6,22 @@
 
 ---
 
+## v1.33 — BGE-reranker two-pass retrieval (2026-05-07) — Phase 4 первая итерация
+
+HNSW(k=30) → BGE-reranker-v2-m3 → top-5 в `GraphRetriever.retrieveContextItems()`. Kill-switch `RAG_RERANKER_ENABLED` (default false). Graceful fallback при reranker error. **+8 unit-tests, 507/507 (было 499).** LlamaSwapClient.rerank() → POST /v1/rerank, сортировка DESC по relevance_score.
+
+**Bench v1.33 (2026-05-07, precision@5 A/B на rag-system-target 91 файл):**
+- L1.1 ×3 = 2/3 ⚠️ (r1: empty commit hash после nudge; r2+r3: yes, server.ts)
+- L1.2 ×3 = 2/3 ✅ AC4 met (первый baseline; r1+r2: Zod schema + safeParse; r3: Fixer loop failed)
+- L1.3 ×3 = 3/3 ✅ AC4 met (первый baseline; 96–112s, стабильно)
+- L4.1 ×3 = **1/3 ❌** (регрессия от 3/3; Fixer создаёт тест-файлы вместо фикса в r1+r3)
+- L2.1 precision@5 baseline: 0/3 → reranker: 0/3 (server.ts не в top-30 HNSW кандидатах — vocabulary gap)
+- L2.2 precision@5 baseline: 0/3 → reranker: 0/3 (routes/schemas не в top-30)
+- Reranker работает (порядок файлов изменился), но не решает fundamental recall miss → нужен BM25 (v1.34)
+- Выявлена: backup-файлы в индексе (data/backups/**), L4.1 Fixer нестабильность
+- Design: [v1.33-reranker.md](docs/designs/v1.33-reranker.md)
+- Bench: [2026-05-07-v1.33-reranker.md](docs/benchmarks/runs/2026-05-07-v1.33-reranker.md)
+
 ## v1.32-c.1 — no-progress nudge before done() (2026-05-05) — Phase 3 fully closed
 
 Перехват преждевременного `done()` в `runTaskAgent`: когда `successfulEdits === 0` (loop видел только errors + read_file), одно `NO_PROGRESS_NUDGE` сообщение блокирует выход и предлагает `replace_in_file` fallback. Вторая попытка `done()` всегда пропускается (cap=1). **+6 unit-tests, 499/499 (было 445+54).** Также: `llamaswap-client.ts` — добавлен `max_tokens: 4096` во все три request bodies (defensive fix для thinking-mode моделей вроде qwen3).

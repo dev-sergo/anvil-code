@@ -4,10 +4,10 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 Phase 3 fully closed (v1.32-c.1 2026-05-05: done-after-error nudge — L1.1 3/3 ✅, L4.1 3/3 ✅, L3.1 spot-check ✅).
+**Статус:** 🟡 v1.33 Phase A+B done (2026-05-07: BGE-reranker two-pass). Bench: L1.2/L1.3 baseline ✅, L4.1 регрессия 1/3, precision@5 = 0% (vocabulary gap → нужен BM25 v1.34).
 **Backend:** llama-swap (operator's proxy на `172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 499/499 unit-tests, 12/12 пакетов собираются чисто.
-**Последнее обновление:** 2026-05-05.
+**Тесты:** 507/507 unit-tests, 12/12 пакетов собираются чисто.
+**Последнее обновление:** 2026-05-07.
 
 ---
 
@@ -62,11 +62,12 @@
 
 Все три — независимые, можно делать параллельно. ROI измеряется на rag-system-target (91 файл) + крупных open-source TS репо.
 
-#### v1.33 — Re-ranker (BGE-reranker-v2-m3) — **highest ROI** (~2-3 дня)
-- [ ] Локальный BGE-reranker (~600MB, помещается в VRAM рядом с qwen-coder через llama-swap alias)
-- [ ] Top-30 → BGE сортирует → top-5 в GraphRetriever
-- [ ] Bench: L1' /version + L2' /getSize на rag-system-target — measure precision@5 lift
-- [ ] **Design needed:** [docs/designs/v1.33-reranker.md](docs/designs/v1.33-reranker.md)
+#### v1.33 — Re-ranker (BGE-reranker-v2-m3) — ✅ 2026-05-07
+- [x] Локальный BGE-reranker (~418MB, llama-swap alias `reranker`)
+- [x] Top-30 → BGE сортирует → top-5 в GraphRetriever; graceful fallback; kill-switch RAG_RERANKER_ENABLED
+- [x] Bench: L1.2/L1.3 baseline впервые (2/3, 3/3 ✅); L2.1/L2.2 precision@5 = 0/3 baseline = 0/3 reranker (vocabulary gap → BM25 needed)
+- [x] **Design:** [docs/designs/v1.33-reranker.md](docs/designs/v1.33-reranker.md)
+- [x] **Bench:** [2026-05-07-v1.33-reranker.md](docs/benchmarks/runs/2026-05-07-v1.33-reranker.md)
 
 #### v1.34 — Hybrid search (BM25 + dense с RRF) (~1-2 дня)
 - [ ] Pure-TS BM25 (или sqlite-fts5) над symbol bodies + `pMap` для индексации
