@@ -87,6 +87,9 @@ export class LlamaSwapClient implements ModelBackend {
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       stream: false,
       max_tokens: 4096,
+      // Disable Qwen3 thinking mode — our agents do their own reasoning via
+      // prompts; model-level thinking tokens consume context without benefit.
+      chat_template_kwargs: { enable_thinking: false },
       ...(options.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     };
@@ -118,6 +121,7 @@ export class LlamaSwapClient implements ModelBackend {
       messages: messages.map(m => ({ role: m.role, content: m.content })),
       stream: true,
       max_tokens: 4096,
+      chat_template_kwargs: { enable_thinking: false },
       ...(options.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     };
@@ -217,6 +221,7 @@ export class LlamaSwapClient implements ModelBackend {
       tools,
       stream: false,
       max_tokens: 4096,
+      chat_template_kwargs: { enable_thinking: false },
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
     };
 
