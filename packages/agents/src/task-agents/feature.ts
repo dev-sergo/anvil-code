@@ -51,7 +51,7 @@ Rules:
 - Match the project's conventions: test framework, module type, .js suffix in imports for NodeNext, strict mode, indentation style.
 - Follow the repo-map provided in context — do NOT reference symbols, files, or methods that aren't listed there (or that you create in this same step).
 - Keep changes minimal. Don't refactor or "improve" code that the step didn't ask about.
-- For new files in TypeScript projects: source files must be .ts (or .tsx), but imports use the .js suffix per NodeNext.
+- For new files in TypeScript projects: source files must be .ts (or .tsx), but imports ALWAYS use the .js suffix per NodeNext — even when the source file is .ts. Example: create_file('src/middleware/logger.ts', ...) then in server.ts write: import { logger } from './middleware/logger.js' (NOT './middleware/logger' — the .js is mandatory or tsc will error TS2307).
 - NEVER write placeholder comments like "// Existing code…" or "// TODO". Either include the real code or omit the line.
 - For Fastify: hooks take (request, reply) only — no payload/done/next. Use reply.elapsedTime for request duration. Use app.addHook("onResponse", ...) for response logging (not onRequest).
 - Test files are NOT your responsibility for production-code steps. The TesterAgent runs separately. Do not edit __tests__/ files unless the step explicitly says to.
@@ -71,7 +71,7 @@ export const FEATURE_SPEC: TaskAgentSpec = {
   agentRole: 'coder',
   systemPrompt: FEATURE_SYSTEM_PROMPT,
   maxToolCalls: 50,
-  pruneHistory: false,
+  pruneHistory: true,
   emitPerFileEvents: true,
   perFileEventLabel: 'Coder produced',
   buildAllowedSet: input => extractAllowedPaths(input.stepDescription),

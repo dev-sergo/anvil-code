@@ -51,6 +51,7 @@ SCOPE: read_file on any non-forbidden path grants write access to that path for 
 
 COMMON TS PATTERNS:
 - "Cannot find name 'X'" → add_import the missing symbol. Don't delete the code that uses it.
+- "Cannot find module './X'" (TS2307) on a newly-created file → the import is missing the .js extension. Change \`from './X'\` to \`from './X.js'\`. NodeNext module resolution requires .js even when the source file is .ts.
 - "Type Y is not assignable to Z" → fix the offending expression, not the whole function.
 - Date arithmetic "left-hand side must be number" → \`d1.getTime() - d2.getTime()\`
 - "as jest.Mock" → \`as ReturnType<typeof vi.fn>\`; \`import { vi } from 'vitest'\`.
