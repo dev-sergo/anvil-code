@@ -4,10 +4,11 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.34.1 release prep done (2026-05-08). README/LICENSE/CONTRIBUTING ✅, .vsix clean ✅, BUGFIX_SPEC + L4.1 **3/3** ✅. Осталось: .vsix live smoke test, git tag + dev→main merge → **release 2026-05-16**.
-**Backend:** llama-swap (operator's proxy на `172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
+**Статус:** 🟢 v1.35 done (2026-05-11). Pre-Reviewer TS check ✅, Gemma 4 26B Coder ✅, L2.x **7/8** (AC4) ✅. Осталось: git tag v1.35 + push → release.
+**Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`). qwen-coder-32k как fallback.
+**Backend:** llama-swap (`172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
 **Тесты:** 530/530 unit-tests, 12/12 пакетов собираются чисто.
-**Последнее обновление:** 2026-05-08.
+**Последнее обновление:** 2026-05-11.
 
 ---
 
@@ -85,12 +86,24 @@
 - [x] .vsix: 0 предупреждений, 29KB; repository + license поля в extension package.json
 - [x] L4.1 bench confirm: **3/3** ✅ (r1: 285s, r2: 60s, r3: 110s — все byte-perfect: `} as User` → `createdAt: new Date().toISOString()`)
 
-#### v1.35 — Multi-hop transitive closure в code-graph (~3-5 дней) — ⏸ POST-RELEASE
-- [ ] При индексации compute closure(symbol, max_depth=3) — кладём в `dependencies_closure` поле
-- [ ] GraphRetriever отдаёт closure (не только 1-hop) с token budget
-- [ ] Атакует cumulative state regression (модель не видит дальние зависимости)
-- [ ] **Skip-решение (2026-05-08):** риск context overflow перевешивает пользу до релиза; L2.x на target ограничен 16K контекстом, а не глубиной графа. Делаем пост-релиз.
-- [ ] **Design needed:** [docs/designs/v1.35-multi-hop-closure.md](docs/designs/v1.35-multi-hop-closure.md)
+#### v1.35 — Pre-Reviewer TS check + Gemma 4 Coder — ✅ 2026-05-11
+
+- [x] `TypeChecker.runOn(paths[])`: full-project tsc, фильтрует output к изменённым файлам
+- [x] `applyAndCheckTs()` в `executeStep`: до Reviewer (2 Fixer retry на TS errors)
+- [x] `step_noop` event + fail-fast при Coder 0 files (G2)
+- [x] `stepFailures` map в `executePlanParallel` — информативный fail message (G3)
+- [x] `FEATURE_SPEC.pruneHistory: true` — устранён context overflow (36k tokens)
+- [x] `LLM_LARGE_MODEL=gemma` — Gemma 4 26B MoE (ctx-32k) как default Coder
+- [x] qwen-coder-32k добавлен в llama-swap (q4_0 KV, flash-attn)
+- [x] Bench: L2.x **7/8** ✅ (AC4); L3.x 1/3 (Reviewer блокер на архитектурных задачах)
+- [x] **Design:** [docs/designs/v1.35-coder-reviewer-fix.md](docs/designs/v1.35-coder-reviewer-fix.md)
+- [x] **Bench:** [2026-05-11-v1.35-gemma-l2x.md](docs/benchmarks/runs/2026-05-11-v1.35-gemma-l2x.md)
+
+#### v1.36 — L3.x improvements (📋 next)
+
+- [ ] Reviewer file-context: дать Reviewer полный контент изменённых файлов (не только diff) → менее строгий reject на архитектурных задачах
+- [ ] Planner decomposition hint: для задач с "create + register" генерировать 2 шага
+- [ ] rag-system-target setup: master→main, tsc symlink, правильная индексация для benchmark на 94-файловом repo
 
 ### Phase 5 — Production storage (📋 после Phase 4)
 
@@ -119,7 +132,7 @@
 | 24GB VRAM cap → потолок 32B Q4, не достичь Sonnet/GPT-4 reasoning | HIGH (hardware) | Реалистичная цель: 70-80% задач локально |
 | Coder/Fixer prompt-accretion (model adaptation) | MEDIUM | Регулярные prompt-консолидации (v1.32-a.3 pattern) |
 | HNSW JSON cap ~10K элементов | MEDIUM | Phase 5 v1.40 Qdrant |
-| 1-hop dependencies, нет transitive closure | MEDIUM | Phase 4 v1.35 |
+| 1-hop dependencies, нет transitive closure | MEDIUM | Phase 5 (v1.40+) |
 | TesterAgent на vitest эмитит jest-style mocks | LOW | `TESTER_ENABLED=false` workaround |
 | Нет hybrid search (BM25 fallback) | LOW-MED | Phase 4 v1.34 |
 | Нет re-ranker | LOW-MED | Phase 4 v1.33 |

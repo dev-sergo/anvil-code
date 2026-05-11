@@ -6,6 +6,22 @@
 
 ---
 
+## v1.35 — Pre-Reviewer TS check + Gemma 4 Coder (2026-05-11) — L2.x unblocked 0/8→7/8
+
+**Pipeline:** `TypeChecker.runOn(paths[])` добавлен в `safe-exec` — запускает полный `tsc --noEmit` на проекте и фильтрует output к изменённым файлам. Вызывается внутри `executeStep` после Coder, до Reviewer (до 2 Fixer-попыток). Ловит parse/type ошибки раньше LLM-judge'а (G1). Fail-fast на `codeChanges.files.length === 0` — эмитирует `step_noop` SSE event и бросает (G2). `executePlanParallel` накапливает `stepFailures: Map<string,string>` — "All N steps failed" теперь включает `"Step s1: <reason>"` (G3). `FEATURE_SPEC.pruneHistory: false→true` — устранён context overflow (36k tokens). `.js` суффикс в FEATURE_SPEC пример + TS2307/TS2339 паттерны в BUGFIX_SPEC. **+4 mock-based unit-tests TypeChecker.runOn, 530/530.**
+
+**Модель:** `LLM_LARGE_MODEL=gemma` → `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k-q8-0-kv-t07`. Gemma 4 генерирует корректный TypeScript с правильными Fastify паттернами (module augmentation для request extension, query typing) — qwen-coder-32b стабильно давал type errors на тех же задачах. `qwen-coder-32k` добавлен в llama-swap config (32k ctx, q4_0 KV cache, flash-attn).
+
+**Bench (2026-05-10–11, sandbox 6 файлов):**
+- baseline qwen-coder-long: **0/8** ✅/commits → v1.35 qwen-coder-32k: **2/8** → Gemma: **7/8** ✅ (AC4 закрыт)
+- false-positives (completed + bad code): **2→0**; no-ops (0 changes): **2→0**
+- L3.x (Gemma, 3 задачи, 3-5 файлов): **1/3** — Reviewer как блокер на архитектурных задачах
+- Design: [v1.35-coder-reviewer-fix.md](docs/designs/v1.35-coder-reviewer-fix.md)
+- Bench L2.x: [2026-05-10-v1.35-l2x-rerun.md](docs/benchmarks/runs/2026-05-10-v1.35-l2x-rerun.md), [2026-05-11-v1.35-gemma-l2x.md](docs/benchmarks/runs/2026-05-11-v1.35-gemma-l2x.md)
+- Bench L3.x: [2026-05-11-v1.35-gemma-l3x.md](docs/benchmarks/runs/2026-05-11-v1.35-gemma-l3x.md)
+
+---
+
 ## v1.34.1 — Release prep: BUGFIX_SPEC fix + GitHub docs + .vsix (2026-05-08)
 
 BUGFIX_SPEC `WORKFLOW` шаг 2 расширен до 4-шагового алгоритма для тест-фейлов: (a) читаем тест → (b) идём по импортам → (c) ищем object literal → (d) добавляем **значение** (`field: value`), а не тип-аннотацию. Новый паттерн в `COMMON TS PATTERNS`: `as SomeType` не добавляет данные — только `field: value` в литерале. Адресует L4.1 r1 регрессию (Coder писал `} as User` без `createdAt`, Fixer в 3-х попытках повторял ту же аннотацию). **530/530 тестов (без изменений). Bench v1.34.1 L4.1 ×3 = 3/3 ✅ (r1: 285s, r2: 60s, r3: 110s — все byte-perfect).**
