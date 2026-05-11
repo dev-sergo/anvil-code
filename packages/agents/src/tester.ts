@@ -41,14 +41,21 @@ Rules:
    import { healthRoute } from '../routes/health.js' (NOT '../routes/health.ts').
 4. Each test file MUST include action: "create" in its JSON entry — schema requires it.
 5. Test OBSERVABLE BEHAVIOR. For HTTP handlers, use the real framework's inject helpers
-   (e.g. fastify.inject({ method, url })) and assert on response status/body.
+   (e.g. app.inject({ method, url })) and assert on response status/body.
    Do NOT assert that app.get / app.register were called — those tests are meaningless.
+   For Fastify tests specifically:
+   - CORRECT: import Fastify, { FastifyInstance } from 'fastify'; let app: FastifyInstance; app = Fastify();
+   - WRONG: let app: ReturnType<typeof Fastify>; — TS1361 error, do not use this pattern.
 6. Do not mock the code under test. Mock only external side effects (network, disk).
 7. Import from the correct relative paths seen in the reference. Use exact file names —
    e.g. '../services/user-service.js', not 'userService' or 'user-service'.
 8. If a test asserts on a response body that the real handler builds dynamically
    (e.g. { id: randomUUID(), createdAt: new Date().toISOString() }), use partial matching
    like expect.objectContaining({ name: 'Jane' }) — don't assert exact equality.
+9. CRITICAL: Every test file in testFiles MUST contain at least one it() or test() call.
+   A describe block with only beforeEach and no it() tests is NOT acceptable — it causes
+   vitest to fail with "No test found in suite". If you cannot write meaningful tests for
+   a given file, omit it from testFiles entirely rather than producing an empty describe.
 
 Output ONLY valid JSON:
 { "testFiles": [{ "path": "src/__tests__/foo.test.ts", "content": "...", "action": "create" }] }`;
