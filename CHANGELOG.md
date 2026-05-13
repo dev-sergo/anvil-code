@@ -5,6 +5,18 @@
 
 ---
 
+## v1.39 — Cumulative mode, validation abort guard, Reviewer-reject Fixer (2026-05-14)
+
+**v1.39-a — Cumulative merge-wait + noop detection:** `CUMULATIVE_MODE=true` (env, default off) makes each successful task ff-merge its `auto/task-*` branch into `auto/cumulative` (configurable via `CUMULATIVE_BRANCH`). Next task forks from accumulated state instead of racing against `defaultBranch`. On non-ff conflict: `cumulative_merge_failed` event fired, branch retained for manual review, task still completes as `done`. `NoopStepError` added to distinguish "Coder 0 files" from generic step failures; `done.data.noopStepIds[]` exposed for bench analytics. `TaskEventType` extended with `cumulative_merged`, `cumulative_merge_failed`. +9 unit tests (5 git-engine, 4 orchestrator).
+
+**v1.39-b — Validation abort guard + BUGFIX `_clear` antipattern:** `runValidationLoop` now wraps each `Promise.all([tsc, tests])` in `Promise.race` with a `VALIDATION_TIMEOUT_MS` timeout (default 300s) and a top-level try/catch — guarantees a terminal `validation_fail(reason='timeout_or_crash')` always follows `validation_start`. Closes T3 `validation_incomplete` from v1.38 real-repo bench (tsc child process hung ~305s, `done` fired with no validation result). `BUGFIX_SPEC COMMON TS PATTERNS` extended with `_clear()/_reset()/__resetForTests()` antipattern: test isolation via public API (`for (const u of store.list()) store.delete(u.id)`) instead of private reset methods. +2 unit tests.
+
+**v1.39-c — Reviewer-reject Fixer dispatch:** Root cause of L2.x `reviewer_reject` from v1.38 bench (H4, T6): step-level Reviewer-reject path was calling patch-based `this.fixer.execute()` even with `TOOL_CALLING_CODER=true` (default since v1.32-d). Patch-based Fixer only sees `currentChanges` as `{edits:[{search,replace}]}` — no full-file content. Fix: dispatch by flag → `BUGFIX_SPEC` (tool-calling Fixer, can `read_file` → structural edits) when on; patch-based fallback preserved when off. Unifies all three Fixer call sites (pre-Reviewer TS check, Reviewer-reject, validation loop) onto BUGFIX_SPEC. Design: [v1.39-c-reviewer-feedback-loop.md](docs/designs/v1.39-c-reviewer-feedback-loop.md). +2 unit tests.
+
+**Bench:** Sandbox 4/6 (L1.1 2/3, L4.1 2/3 — both fails = TesterAgent codegen bugs, not v1.39 regression). Real-repo `reviewer_reject` cohort: H4 r2 ✅ commit (was `reviewer_reject ×3` in v1.38), T6 r2 ✅ commit clean (was `reviewer_reject ×3` in v1.38) — **both closed on 2nd attempt**. Unit tests: **547/547**, 12/12 packages. Bench: [2026-05-14-v1.39-sandbox-real-repo.md](docs/benchmarks/runs/2026-05-14-v1.39-sandbox-real-repo.md).
+
+---
+
 ## v1.38 — Real-repo sprint + public release (2026-05-13)
 
 **Real-repo diagnostic & fixes (sprint D1–D2, commit `67562de`):** Ran 18 tasks against `honojs/hono` (326 files) and `trpc/trpc` (714 files) — **0/18 commits** on Day 1. Six fixes on Day 2: (1) `Promise.race([])` hang in `executePlanParallel` when all steps were synchronously skipped; (2) **baseline detection** — tsc+test failures on a clean repo are recorded once and filtered from validation (hono snapshot failures stop blocking); (3) `MAX_READ_LINES=350`, `HISTORY_KEEP_TAIL=4`, repo-map budget 5 KB, prompt-context 10 KB — cut context overflow from 33% to ~10%; (4) RAG-retrieved paths are now read-only for the Coder — eliminates destructive side-effect edits; (5) `applyAndCheckTs` excludes test files from the pre-Reviewer TS check; (6) `runValidationLoop` uses `runOn(prodPaths)` instead of full tsc. **Result: 6/16 (38%) on real repos.** Bench: [2026-05-12-real-repo-diagnostic.md](docs/benchmarks/runs/2026-05-12-real-repo-diagnostic.md).

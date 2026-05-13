@@ -4,13 +4,13 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.38 done (2026-05-13) — публичный релиз готов. Реальные репо: hono 38%, trpc 38% (sprint D1→D2 фиксы). Sandbox держится 87.5%. VSCode extension stable. Документация (README, BENCHMARK, SETUP, ARCHITECTURE) переписана.
+**Статус:** 🟢 v1.39 done (2026-05-14) — cumulative merge-wait, noop detection, validation abort guard, BUGFIX `_clear()` antipattern, Reviewer-reject → BUGFIX_SPEC dispatch. Bench: sandbox 4/6 (tester bugs), `reviewer_reject` cohort 2/2 на r2 (H4 + T6 оба ✅). Реальные репо H4+T6: было `reviewer_reject ×3` в v1.38 → commit в v1.39.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
 **Backend:** llama-swap (local endpoint, see `.env`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 530+/530+ unit-tests, 12/12 пакетов чисто.
-**Последнее обновление:** 2026-05-13.
+**Тесты:** 547/547 unit-tests, 12/12 пакетов чисто.
+**Последнее обновление:** 2026-05-14.
 
 ---
 
@@ -126,6 +126,34 @@
 - [x] **Bench:** [2026-05-12-real-repo-diagnostic.md](docs/benchmarks/runs/2026-05-12-real-repo-diagnostic.md)
 - [ ] **Не закрыто (перенесено в v1.39+):** cumulative pipeline merge-wait между задачами в worker; BUGFIX_SPEC паттерн для `_clear()` → `list().forEach(u => delete(u.id))`
 
+#### v1.39-a — Cumulative merge-wait + noop detection (✅ 2026-05-14)
+
+- [x] `CUMULATIVE_MODE=true` (env) + `CUMULATIVE_BRANCH=auto/cumulative` (env)
+- [x] `GitEngine.resolveBaseBranch()` — task forks from cumulative branch when enabled; cumulative branch bootstrapped from defaultBranch on first use
+- [x] `GitEngine.mergeIntoCumulative(taskBranch)` — `git merge --ff-only`; throws on conflict
+- [x] `Orchestrator.runTask` — post-commit ff-merge call under cumulative flag; emits `cumulative_merged` / `cumulative_merge_failed` events; task itself stays `done` on merge failure (branch retained for manual review)
+- [x] `NoopStepError` distinguishes "Coder produced 0 files" from generic step failures; `done.data.noopStepIds[]` exposed to consumers
+- [x] `TaskEventType` extended with `cumulative_merged`, `cumulative_merge_failed`
+- [x] Tests: 5 new in `git-engine` (cumulative branching + ff-merge happy/error), 4 new in `orchestrator` (cumulative on/off + noop counter). **543/543** ✅
+
+#### v1.39-b — BUGFIX_SPEC patterns + validation_incomplete (✅ 2026-05-14)
+
+- [x] `_clear()` / `_reset()` / `__resetForTests()` test-isolation antipattern → `for (const u of store.list()) store.delete(u.id)` workflow in BUGFIX_SPEC `COMMON TS PATTERNS`
+- [x] `validation_incomplete` (T3): `runValidationLoop` now wraps Promise.all in `Promise.race` with `VALIDATION_TIMEOUT_MS` (default 300_000ms) + top-level try/catch — always emits a terminal `validation_fail` with `reason='timeout_or_crash'` after `validation_start`
+- [x] `VALIDATION_TIMEOUT_MS` env added; documented at config site
+- [x] Tests: +2 in orchestrator (runner-throws, hang-on-timeout); **545/545** ✅
+- [ ] Bench L4.x ×3 + real-repo T3 re-run (will land with v1.39 final)
+
+#### v1.39-c — Reviewer-reject Fixer dispatch (✅ 2026-05-14)
+
+- [x] **Root cause:** step-level Reviewer-reject path was unconditionally calling patch-based `this.fixer.execute(...)` even with `TOOL_CALLING_CODER=true` (default since v1.32-d). Patch-Fixer only saw `currentChanges` as `{edits:[{search,replace}]}` — no full-file content. Source of L2.x `reviewer_reject` in v1.38 real-repo bench (T6, H4).
+- [x] **Fix:** dispatch by `config.agents.toolCallingCoder` (matches pre-Reviewer TS check + validation loop):
+  - `true` → `runTaskAgent(BUGFIX_SPEC, {issues: review.issues, currentFiles: currentChanges, ...})` — Fixer can `read_file` for full content + structural tools
+  - `false` → legacy `this.fixer.execute(...)` preserved
+- [x] Design: [docs/designs/v1.39-c-reviewer-feedback-loop.md](docs/designs/v1.39-c-reviewer-feedback-loop.md)
+- [x] Tests: +2 in orchestrator (BUGFIX_SPEC dispatch on tool-calling, patch fallback on legacy); **547/547** ✅
+- [ ] Bench L1/L4 sandbox (regression guard 3+3) + real-repo T6/H4 (close `reviewer_reject` cohort)
+
 ### Phase 5 — Production storage (📋 после Phase 4)
 
 #### v1.40 — Qdrant migration
@@ -145,7 +173,7 @@
 
 ---
 
-## Известные ограничения (актуально на v1.38)
+## Известные ограничения (актуально на v1.39-a)
 
 | Ограничение | Severity | Mitigation / план |
 |---|---|---|

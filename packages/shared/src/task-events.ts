@@ -17,6 +17,12 @@ export type TaskEventType =
   | 'commit'
   | 'commit_skipped'
   | 'commit_partial'
+  // v1.39-a — cumulative-mode signals emitted only when CUMULATIVE_MODE=true.
+  // `cumulative_merged` fires after a successful ff-merge of the task branch
+  // into the cumulative branch; `cumulative_merge_failed` fires when ff-only
+  // refuses (conflict / non-fast-forward) — the task itself stays `done`.
+  | 'cumulative_merged'
+  | 'cumulative_merge_failed'
   | 'done'
   | 'error'
   // Indexing pipeline events. The "taskId" carries an indexId of the form

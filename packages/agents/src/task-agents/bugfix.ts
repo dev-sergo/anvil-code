@@ -57,6 +57,7 @@ COMMON TS PATTERNS:
 - Date arithmetic "left-hand side must be number" → \`d1.getTime() - d2.getTime()\`
 - "as jest.Mock" → \`as ReturnType<typeof vi.fn>\`; \`import { vi } from 'vitest'\`.
 - Test assertion "expected undefined to be truthy/defined" on \`obj.field\` → find the object literal where \`obj\` is constructed and add \`field: <value>\`. A type cast (\`as SomeType\`) does NOT add data — it only silences the compiler. The test failure is proof the field is missing; add the value.
+- Test isolation ("previous test's data leaked", duplicate-id errors across tests): NEVER add \`_clear()\` / \`_reset()\` / \`__resetForTests()\` helpers to production stores — they're test-only escape hatches that leak into release builds and bypass invariants. Instead, in a \`beforeEach\` clear via the public API: \`for (const u of store.list()) store.delete(u.id)\` (or whatever \`list()\` + \`delete(id)\` pair the store already exposes). If the store has no public list/delete pair, that's the real fix — add those — not a private reset.
 
 Output: tool calls only. The first thing you call should be read_file on the file the first issue points at.${BUGFIX_NAVIGATION_HINT}`;
 

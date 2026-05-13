@@ -29,6 +29,17 @@ import {
   type ProjectConventions,
 } from '@rag-system/shared';
 
+// v1.39-a — distinguishes "Coder produced 0 files" from generic step failures
+// so the orchestrator can report `noopStepIds` separately in the task summary.
+// Bench analytics use this to spot regressions where the model "did nothing"
+// vs. tasks that genuinely failed at edit/validation/Reviewer time.
+export class NoopStepError extends Error {
+  constructor(public stepId: string, message: string) {
+    super(message);
+    this.name = 'NoopStepError';
+  }
+}
+
 export class Orchestrator {
   private planner: PlannerAgent;
   private architect: ArchitectAgent;
@@ -90,7 +101,7 @@ export class Orchestrator {
     await this.computeBaseline();
 
     // 1. Create Git Branch
-    await this.git.createBranchForTask(taskId);
+    const branchName = await this.git.createBranchForTask(taskId);
 
     // 2. Retrieve context + load project conventions.
     // Planner only needs a high-level view; it doesn't write files, so we feed it
@@ -138,7 +149,7 @@ export class Orchestrator {
     });
 
     const writtenFiles: string[] = [];
-    const { allFileChanges, completedSteps, failedSteps, stepFailures } = await this.executePlanParallel(
+    const { allFileChanges, completedSteps, failedSteps, stepFailures, noopStepIds } = await this.executePlanParallel(
       taskId,
       plan.steps,
       mode,
@@ -263,6 +274,32 @@ export class Orchestrator {
         message: `Committed ${writtenFiles.length} file(s)${hashSuffix}`,
         data: { fileCount: writtenFiles.length, commitHash },
       });
+
+      // v1.39-a — cumulative merge-wait. Ff-merge this task's branch into the
+      // cumulative branch so the next task forks from accumulated state instead
+      // of racing against `main`. Failure leaves the task branch intact for
+      // manual resolution and surfaces a cumulative_merge_failed event; the
+      // outer task is still considered done (commit landed on its own branch).
+      if (config.git.cumulative.enabled) {
+        try {
+          await this.git.mergeIntoCumulative(branchName);
+          taskEvents.emitEvent({
+            taskId,
+            type: 'cumulative_merged',
+            message: `Merged ${branchName} into ${config.git.cumulative.branch}`,
+            data: { branchName, cumulative: config.git.cumulative.branch },
+          });
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn({ branchName, error: msg }, 'Cumulative merge failed');
+          taskEvents.emitEvent({
+            taskId,
+            type: 'cumulative_merge_failed',
+            message: `Cumulative merge failed: ${msg}`,
+            data: { branchName, cumulative: config.git.cumulative.branch, error: msg.slice(0, 500) },
+          });
+        }
+      }
     } else if (writtenFiles.length > 0 && shouldSkipCommit) {
       log.warn({ issuesCount: validation.issuesCount }, 'Skipping commit — validation failed');
       taskEvents.emitEvent({
@@ -311,7 +348,7 @@ export class Orchestrator {
     });
 
     log.info(
-      { completed: completedSteps.size, failed: failedSteps.size, unrecovered: unrecoveredWrites.length },
+      { completed: completedSteps.size, failed: failedSteps.size, noop: noopStepIds.size, unrecovered: unrecoveredWrites.length },
       'Task completed',
     );
     taskEvents.emitEvent({
@@ -323,6 +360,7 @@ export class Orchestrator {
         failed: failedSteps.size,
         partial,
         failedStepIds,
+        noopStepIds: [...noopStepIds],
         unrecoveredWrites,
       },
     });
@@ -333,13 +371,14 @@ export class Orchestrator {
     steps: Array<{ id: string; description: string; dependencies: string[] }>,
     mode: 'fast'|'balanced'|'deep',
     log: ReturnType<typeof taskLogger>,
-  ): Promise<{ allFileChanges: FileChange[]; completedSteps: Set<string>; failedSteps: Set<string>; stepFailures: Map<string, string> }> {
+  ): Promise<{ allFileChanges: FileChange[]; completedSteps: Set<string>; failedSteps: Set<string>; stepFailures: Map<string, string>; noopStepIds: Set<string> }> {
     detectCycles(steps);
 
     const allFileChanges: FileChange[] = [];
     const completedSteps = new Set<string>();
     const failedSteps = new Set<string>();
     const stepFailures = new Map<string, string>();
+    const noopStepIds = new Set<string>();
     const remaining = new Map(steps.map(s => [s.id, s] as const));
     const inFlight = new Map<string, Promise<void>>();
     const parallelism = Math.max(1, config.agents.parallelism);
@@ -401,6 +440,7 @@ export class Orchestrator {
           log.error({ stepId: step.id, error: msg }, 'Step failed — continuing with remaining steps');
           failedSteps.add(step.id);
           stepFailures.set(step.id, msg);
+          if (err instanceof NoopStepError) noopStepIds.add(step.id);
           this.store.saveFailure(
             `step-failure:${step.id}:${msg.slice(0, 80)}`,
             'Step skipped after agent error; remaining steps continue',
@@ -467,7 +507,7 @@ export class Orchestrator {
       }
     }
 
-    return { allFileChanges, completedSteps, failedSteps, stepFailures };
+    return { allFileChanges, completedSteps, failedSteps, stepFailures, noopStepIds };
   }
 
   private async executeStep(
@@ -595,7 +635,7 @@ export class Orchestrator {
         message: `Step ${step.id} produced no file changes`,
         data: { stepId: step.id },
       });
-      throw new Error(`Step ${step.id}: Coder produced no file changes`);
+      throw new NoopStepError(step.id, `Step ${step.id}: Coder produced no file changes`);
     }
 
     // v1.32-c: skip Tester for refactor kinds. Refactor preserves behavior
@@ -680,25 +720,48 @@ export class Orchestrator {
           taskId,
           decision: 'Self-Healing Retry',
           context: `Errors: ${review.issues.join(', ')}`,
-          consequences: 'Invoked FixerAgent to resolve issues.',
+          consequences: config.agents.toolCallingCoder
+            ? 'Invoked BUGFIX_SPEC Fixer (tool-calling) to resolve Reviewer issues.'
+            : 'Invoked FixerAgent (patch-based) to resolve issues.',
         });
 
-        const fixerResult = await this.fixer.execute(
-          review.issues, currentChanges, promptContext, mode,
-          (file, index) => taskEvents.emitEvent({
-            taskId,
-            type: 'coder_file_ready',
-            message: `Fixer produced ${file.path}`,
-            data: {
-              stepId: step.id,
-              path: file.path,
-              action: file.action,
-              size: partialFileSize(file),
-              index,
-              source: 'fixer',
-            },
-          }),
-        );
+        // v1.39-c — dispatch by toolCallingCoder flag. Previously this site
+        // unconditionally used the patch-based Fixer even with toolCallingCoder=true
+        // (default since v1.32-d): the patch path only saw `currentChanges` as
+        // search/replace edit blocks, never the full file content. That was the
+        // root of L2.x `reviewer_reject` failures in v1.38 bench (T6, H4).
+        // BUGFIX_SPEC's tool-calling Fixer can read_file the actual on-disk
+        // content and edit via structural tools — same machinery used by the
+        // pre-Reviewer TS check (v1.35) and validation loop (v1.32-c).
+        const fixerResult = config.agents.toolCallingCoder
+          ? await runTaskAgent(
+              BUGFIX_SPEC,
+              {
+                stepDescription: step.description,
+                context: promptContext,
+                taskMode: mode,
+                issues: review.issues,
+                currentFiles: currentChanges,
+              },
+              this.router,
+              this.writer.root,
+            )
+          : await this.fixer.execute(
+              review.issues, currentChanges, promptContext, mode,
+              (file, index) => taskEvents.emitEvent({
+                taskId,
+                type: 'coder_file_ready',
+                message: `Fixer produced ${file.path}`,
+                data: {
+                  stepId: step.id,
+                  path: file.path,
+                  action: file.action,
+                  size: partialFileSize(file),
+                  index,
+                  source: 'fixer',
+                },
+              }),
+            );
         // v1.32-d.1 — Merge instead of replace. Wholesale `currentChanges =
         // fixerResult.files` was losing Coder's correct edits any time Fixer
         // touched only a subset (e.g. only the test file Reviewer flagged).
@@ -975,11 +1038,42 @@ export class Orchestrator {
       .filter(c => (c.path.endsWith('.ts') || c.path.endsWith('.tsx')) && c.action !== 'delete' && !isTestPath(c.path))
       .map(c => c.path);
 
+    // v1.39-b — guard each attempt with a timeout and a top-level try/catch so
+    // we always reach a terminal validation_* event after validation_start
+    // (T3 `validation_incomplete` from v1.38 bench: tsc/vitest child process
+    // hung, `done` fired without any validation_pass/_fail in between).
+    const timeoutMs = config.agents.validationTimeoutMs;
+
     while (attempt <= MAX_VALIDATION_RETRIES) {
-      const [typeResult, testResult] = await Promise.all([
-        prodPaths.length > 0 ? this.typeChecker.runOn(prodPaths) : this.typeChecker.run(),
-        this.testRunner.run(),
-      ]);
+      let typeResult: Awaited<ReturnType<typeof this.typeChecker.run>>;
+      let testResult: Awaited<ReturnType<typeof this.testRunner.run>>;
+      try {
+        const validationPromise = Promise.all([
+          prodPaths.length > 0 ? this.typeChecker.runOn(prodPaths) : this.typeChecker.run(),
+          this.testRunner.run(),
+        ]);
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`validation timeout after ${timeoutMs}ms`)),
+            timeoutMs,
+          ).unref?.(),
+        );
+        [typeResult, testResult] = await Promise.race([validationPromise, timeoutPromise]);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.error({ attempt, error: msg }, 'Validation aborted (timeout or runner crash)');
+        this.store.saveFailure(
+          `validation-aborted:${msg.slice(0, 100)}`,
+          'Validation runner hung or crashed; commit skipped',
+        );
+        taskEvents.emitEvent({
+          taskId,
+          type: 'validation_fail',
+          message: `Validation aborted: ${msg.slice(0, 200)}`,
+          data: { reason: 'timeout_or_crash', attempt, error: msg.slice(0, 500) },
+        });
+        return { passed: false, issuesCount: 1, writtenFiles: [...fixerWritten] };
+      }
 
       const rawIssues: string[] = [];
       if (!typeResult.success && !typeResult.skipped) {

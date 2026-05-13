@@ -93,6 +93,12 @@ export const config = {
     // from Coder's read snapshot). Patch-based remains opt-in via
     // TOOL_CALLING_CODER=false for regression-debug only.
     toolCallingCoder: envBool('TOOL_CALLING_CODER', true),
+    // v1.39-b — guards `runValidationLoop` against hung tsc/vitest child
+    // processes. On timeout the loop emits `validation_fail` with reason
+    // 'timeout' so the task always reaches a terminal event after
+    // `validation_start` (closes T3 `validation_incomplete` from v1.38 bench).
+    // 5 min per attempt × up to 3 attempts ≈ 15 min worst case.
+    validationTimeoutMs: envInt('VALIDATION_TIMEOUT_MS', 300000),
   },
   safeExec: {
     dryRun: envBool('SAFE_EXEC_DRY_RUN', false),
@@ -105,6 +111,14 @@ export const config = {
     defaultBranch: env('GIT_DEFAULT_BRANCH', 'main'),
     branchPrefix: env('GIT_BRANCH_PREFIX', 'auto/task'),
     commitOnlyIfValid: envBool('COMMIT_ONLY_IF_VALID', true),
+    // v1.39-a — cumulative mode. When enabled, successful tasks ff-merge into
+    // `cumulative.branch` (default `auto/cumulative`) and the next task forks
+    // from that branch instead of `defaultBranch`. Cleanly off by default so
+    // `main` stays untouched on production repos.
+    cumulative: {
+      enabled: envBool('CUMULATIVE_MODE', false),
+      branch: env('CUMULATIVE_BRANCH', 'auto/cumulative'),
+    },
   },
   // flat alias used by orchestrator
   JOB_MAX_RETRIES: envInt('JOB_MAX_RETRIES', 3),

@@ -16,6 +16,18 @@ vi.mock('@rag-system/shared', async () => {
   };
 });
 
+// v1.39-c — capture runTaskAgent invocations so we can assert the Reviewer-reject
+// path routes through BUGFIX_SPEC (vs. patch-based fixer) when toolCallingCoder
+// is on. Default return shape mirrors a passing Coder/Fixer so existing tests
+// that flip toolCallingCoder=true (cumulative + noop suites do NOT) keep working.
+const runTaskAgentMock = vi.fn().mockResolvedValue({
+  files: [{ action: 'create', path: 'tool-calling-mock.ts', content: 'export {}' }],
+});
+
+vi.mock('../task-agents/runner.js', () => ({
+  runTaskAgent: runTaskAgentMock,
+}));
+
 vi.mock('@rag-system/safe-exec', () => ({
   SafeWriter: class {
     execute = vi.fn();
@@ -63,8 +75,9 @@ function buildOrchestrator(opts: {
   };
   const writer = { execute: vi.fn(), root: '/tmp' };
   const git = {
-    createBranchForTask: vi.fn().mockResolvedValue(undefined),
+    createBranchForTask: vi.fn().mockResolvedValue('auto/task-mock-1'),
     commitChanges: vi.fn().mockResolvedValue('abc12345deadbeef0000000000000000abcdef00'),
+    mergeIntoCumulative: vi.fn().mockResolvedValue(undefined),
   };
 
   const orch = new Orchestrator(
@@ -285,10 +298,11 @@ describe('Orchestrator per-step recovery', () => {
     expect(captured.find(e => e.type === 'commit_partial')).toBeUndefined();
     const doneEvent = captured.find(e => e.type === 'done');
     expect(doneEvent).toBeDefined();
-    const doneData = doneEvent!.data as { partial: boolean; failedStepIds: string[]; unrecoveredWrites: string[] };
+    const doneData = doneEvent!.data as { partial: boolean; failedStepIds: string[]; unrecoveredWrites: string[]; noopStepIds: string[] };
     expect(doneData.partial).toBe(false);
     expect(doneData.failedStepIds).toEqual([]);
     expect(doneData.unrecoveredWrites).toEqual([]);
+    expect(doneData.noopStepIds).toEqual([]);
   });
 
   // v1.25.1 — validation-loop Fixer's writer.execute throws (typically a
@@ -450,6 +464,346 @@ describe('Orchestrator per-step recovery', () => {
     expect(git.commitChanges).toHaveBeenCalledTimes(1);
     const stagedFiles = git.commitChanges.mock.calls[0]![2] as string[];
     expect(stagedFiles).toEqual(['src/foo.ts']);
+  });
+});
+
+// v1.39-a — cumulative-mode wiring lives inside runTask. These tests pin the
+// observable behavior on the SSE/event bus (the consumer surface the VSCode
+// extension and bench harness depend on) so future refactors of the merge call
+// site can't silently regress signaling.
+describe('Orchestrator cumulative mode (v1.39-a)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.CUMULATIVE_MODE;
+  });
+
+  it('emits cumulative_merged after commit when CUMULATIVE_MODE=true', async () => {
+    const { config } = await import('@rag-system/shared');
+    const original = config.git.cumulative.enabled;
+    (config.git.cumulative as { enabled: boolean }).enabled = true;
+
+    try {
+      const { orch, git } = buildOrchestrator({
+        steps: [{ id: 'a', description: 'step a', dependencies: [] }],
+      });
+      const branchName = 'auto/task-cumulative-1-12345';
+      git.createBranchForTask.mockResolvedValue(branchName);
+
+      const taskId = 'task-cumul-ok';
+      const captured: TaskEvent[] = [];
+      const handler = (e: TaskEvent) => captured.push(e);
+      taskEvents.on(`task:${taskId}`, handler);
+      try {
+        await orch.runTask(taskId, 'cumulative work');
+      } finally {
+        taskEvents.off(`task:${taskId}`, handler);
+      }
+
+      expect(git.mergeIntoCumulative).toHaveBeenCalledWith(branchName);
+      const mergedEvent = captured.find(e => e.type === 'cumulative_merged');
+      expect(mergedEvent).toBeDefined();
+      expect((mergedEvent!.data as { branchName: string }).branchName).toBe(branchName);
+      // The cumulative merge must come AFTER the commit event so consumers
+      // know the change has actually landed on the task branch first.
+      const commitIdx = captured.findIndex(e => e.type === 'commit');
+      const mergedIdx = captured.indexOf(mergedEvent!);
+      expect(commitIdx).toBeGreaterThanOrEqual(0);
+      expect(mergedIdx).toBeGreaterThan(commitIdx);
+    } finally {
+      (config.git.cumulative as { enabled: boolean }).enabled = original;
+    }
+  });
+
+  it('emits cumulative_merge_failed without throwing when ff-merge throws', async () => {
+    const { config } = await import('@rag-system/shared');
+    const original = config.git.cumulative.enabled;
+    (config.git.cumulative as { enabled: boolean }).enabled = true;
+
+    try {
+      const { orch, git } = buildOrchestrator({
+        steps: [{ id: 'a', description: 'step a', dependencies: [] }],
+      });
+      git.mergeIntoCumulative.mockRejectedValue(new Error('Cumulative ff-merge of auto/task-X failed: non-fast-forward'));
+
+      const taskId = 'task-cumul-conflict';
+      const captured: TaskEvent[] = [];
+      const handler = (e: TaskEvent) => captured.push(e);
+      taskEvents.on(`task:${taskId}`, handler);
+      try {
+        // Task must NOT throw — merge failure leaves the branch for manual
+        // resolution but the underlying commit on the task branch is intact.
+        await expect(orch.runTask(taskId, 'conflicty')).resolves.toBeUndefined();
+      } finally {
+        taskEvents.off(`task:${taskId}`, handler);
+      }
+
+      const failEvent = captured.find(e => e.type === 'cumulative_merge_failed');
+      expect(failEvent).toBeDefined();
+      expect((failEvent!.data as { error: string }).error).toContain('non-fast-forward');
+      // `done` still fires so the SSE stream closes cleanly.
+      expect(captured.find(e => e.type === 'done')).toBeDefined();
+    } finally {
+      (config.git.cumulative as { enabled: boolean }).enabled = original;
+    }
+  });
+
+  it('does NOT call mergeIntoCumulative when CUMULATIVE_MODE is off', async () => {
+    const { orch, git } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'step a', dependencies: [] }],
+    });
+
+    const taskId = 'task-no-cumul';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      await orch.runTask(taskId, 'normal work');
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    expect(git.mergeIntoCumulative).not.toHaveBeenCalled();
+    expect(captured.find(e => e.type === 'cumulative_merged')).toBeUndefined();
+    expect(captured.find(e => e.type === 'cumulative_merge_failed')).toBeUndefined();
+  });
+});
+
+// v1.39-b — runValidationLoop must always reach a terminal validation_pass /
+// validation_fail event after emitting validation_start. T3 in the v1.38 real-
+// repo bench had tsc/vitest hang for ~300s, leaving `done` to fire with no
+// validation result in between. These tests pin the timeout + try/catch.
+describe('Orchestrator validation incompleteness guard (v1.39-b)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('emits validation_fail when validation runners throw, and does not crash the task', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'a', dependencies: [] }],
+    });
+
+    // computeBaseline + applyAndCheckTs pass; validation-loop runOn throws —
+    // simulating tsc crashing or the child process being killed.
+    let typeCheckCalls = 0;
+    const crashingTypeCheck = vi.fn(async () => {
+      typeCheckCalls++;
+      if (typeCheckCalls <= 2) {
+        return { success: true, output: '', exitCode: 0, durationMs: 5 };
+      }
+      throw new Error('tsc spawn ENOENT');
+    });
+    (orch as unknown as { typeChecker: { run: typeof crashingTypeCheck; runOn: typeof crashingTypeCheck } }).typeChecker = {
+      run: crashingTypeCheck,
+      runOn: crashingTypeCheck,
+    };
+
+    const taskId = 'task-validation-crash';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      await expect(orch.runTask(taskId, 'crashy')).resolves.toBeUndefined();
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    // Must NOT have a silent gap: validation_start is followed by validation_fail
+    const validationEvents = captured.filter(
+      e => e.type === 'validation_start' || e.type === 'validation_pass' || e.type === 'validation_fail',
+    );
+    expect(validationEvents.map(e => e.type)).toEqual(['validation_start', 'validation_fail']);
+    const failEvent = validationEvents[1];
+    expect((failEvent.data as { reason: string }).reason).toBe('timeout_or_crash');
+    expect((failEvent.data as { error: string }).error).toContain('tsc spawn ENOENT');
+  });
+
+  it('emits validation_fail with timeout reason when validation hangs', async () => {
+    const { config } = await import('@rag-system/shared');
+    const original = config.agents.validationTimeoutMs;
+    (config.agents as { validationTimeoutMs: number }).validationTimeoutMs = 50;
+
+    try {
+      const { orch } = buildOrchestrator({
+        steps: [{ id: 'a', description: 'a', dependencies: [] }],
+      });
+
+      let typeCheckCalls = 0;
+      const hangingTypeCheck = vi.fn(async () => {
+        typeCheckCalls++;
+        if (typeCheckCalls <= 2) {
+          return { success: true, output: '', exitCode: 0, durationMs: 5 };
+        }
+        // Resolves after timeout — simulating tsc child hung on disk IO.
+        return new Promise<{ success: boolean; output: string; exitCode: number; durationMs: number }>(r =>
+          setTimeout(() => r({ success: true, output: '', exitCode: 0, durationMs: 10_000 }), 500),
+        );
+      });
+      (orch as unknown as { typeChecker: { run: typeof hangingTypeCheck; runOn: typeof hangingTypeCheck } }).typeChecker = {
+        run: hangingTypeCheck,
+        runOn: hangingTypeCheck,
+      };
+
+      const taskId = 'task-validation-hang';
+      const captured: TaskEvent[] = [];
+      const handler = (e: TaskEvent) => captured.push(e);
+      taskEvents.on(`task:${taskId}`, handler);
+      try {
+        await expect(orch.runTask(taskId, 'hang')).resolves.toBeUndefined();
+      } finally {
+        taskEvents.off(`task:${taskId}`, handler);
+      }
+
+      const failEvent = captured.find(e => e.type === 'validation_fail');
+      expect(failEvent).toBeDefined();
+      const data = failEvent!.data as { reason: string; error: string };
+      expect(data.reason).toBe('timeout_or_crash');
+      expect(data.error).toMatch(/timeout after 50ms/);
+      // `done` still fires so SSE consumers see task closure.
+      expect(captured.find(e => e.type === 'done')).toBeDefined();
+    } finally {
+      (config.agents as { validationTimeoutMs: number }).validationTimeoutMs = original;
+    }
+  });
+});
+
+// v1.39-c — step-level Reviewer-reject path must route through BUGFIX_SPEC
+// (tool-calling Fixer) when toolCallingCoder=true. Previously the patch-based
+// Fixer ran even with tool-calling on — patch-based only sees `currentChanges`
+// as search/replace edits, never the full file content. v1.38 real-repo bench
+// T6/H4 traced "reviewer_reject" failures back to that loss-of-context.
+describe('Orchestrator Reviewer-reject Fixer dispatch (v1.39-c)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('routes through BUGFIX_SPEC when toolCallingCoder=true', async () => {
+    const { config } = await import('@rag-system/shared');
+    const original = config.agents.toolCallingCoder;
+    const originalMax = config.JOB_MAX_RETRIES;
+    (config.agents as { toolCallingCoder: boolean }).toolCallingCoder = true;
+    (config as { JOB_MAX_RETRIES: number }).JOB_MAX_RETRIES = 2;
+
+    try {
+      const { orch } = buildOrchestrator({
+        steps: [{ id: 'a', description: 'step a', dependencies: [] }],
+      });
+
+      // Reviewer rejects once, then approves — so exactly one Fixer dispatch
+      // happens and we can pin which path was taken.
+      let reviewerCalls = 0;
+      (orch as unknown as { reviewer: { execute: ReturnType<typeof vi.fn> } }).reviewer = {
+        execute: vi.fn(async () => {
+          reviewerCalls++;
+          return reviewerCalls === 1
+            ? { isApproved: false, issues: ['hardcoded literal instead of constant'] }
+            : { isApproved: true, issues: [] };
+        }),
+      };
+      // Patch-Fixer must NOT be called on this path.
+      const patchFixer = vi.fn().mockResolvedValue({ files: [] });
+      (orch as unknown as { fixer: { execute: ReturnType<typeof vi.fn> } }).fixer = { execute: patchFixer };
+
+      await orch.runTask('task-v39c-on', 'reviewer reject scenario');
+
+      expect(patchFixer).not.toHaveBeenCalled();
+      // runTaskAgent is called for Coder too (pickSpec(stepKind) path); filter
+      // to BUGFIX_SPEC calls — those carry `issues + currentFiles` per the
+      // validation-mode contract reused by the Reviewer-reject path.
+      const bugfixCalls = runTaskAgentMock.mock.calls.filter(args => {
+        const input = args[1] as { issues?: string[]; currentFiles?: unknown[] };
+        return Array.isArray(input.issues) && input.issues.length > 0;
+      });
+      expect(bugfixCalls.length).toBeGreaterThanOrEqual(1);
+      const firstBugfix = bugfixCalls[0]![1] as { issues: string[] };
+      expect(firstBugfix.issues).toContain('hardcoded literal instead of constant');
+    } finally {
+      (config.agents as { toolCallingCoder: boolean }).toolCallingCoder = original;
+      (config as { JOB_MAX_RETRIES: number }).JOB_MAX_RETRIES = originalMax;
+    }
+  });
+
+  it('falls back to patch-based fixer when toolCallingCoder=false', async () => {
+    const { config } = await import('@rag-system/shared');
+    const original = config.agents.toolCallingCoder;
+    const originalMax = config.JOB_MAX_RETRIES;
+    (config.agents as { toolCallingCoder: boolean }).toolCallingCoder = false;
+    (config as { JOB_MAX_RETRIES: number }).JOB_MAX_RETRIES = 2;
+
+    try {
+      const { orch } = buildOrchestrator({
+        steps: [{ id: 'a', description: 'step a', dependencies: [] }],
+      });
+
+      let reviewerCalls = 0;
+      (orch as unknown as { reviewer: { execute: ReturnType<typeof vi.fn> } }).reviewer = {
+        execute: vi.fn(async () => {
+          reviewerCalls++;
+          return reviewerCalls === 1
+            ? { isApproved: false, issues: ['style: missing semicolon'] }
+            : { isApproved: true, issues: [] };
+        }),
+      };
+      const patchFixer = vi.fn().mockResolvedValue({ files: [{ action: 'create', path: 'fix.ts', content: 'x' }] });
+      (orch as unknown as { fixer: { execute: ReturnType<typeof vi.fn> } }).fixer = { execute: patchFixer };
+
+      await orch.runTask('task-v39c-off', 'legacy patch fixer path');
+
+      expect(patchFixer).toHaveBeenCalledTimes(1);
+      // First positional arg is the issues array per FixerAgent.execute(issues, ...).
+      const callArgs = patchFixer.mock.calls[0] as unknown[];
+      expect(callArgs[0]).toContain('style: missing semicolon');
+    } finally {
+      (config.agents as { toolCallingCoder: boolean }).toolCallingCoder = original;
+      (config as { JOB_MAX_RETRIES: number }).JOB_MAX_RETRIES = originalMax;
+    }
+  });
+});
+
+// v1.39-a — noopStepIds distinguishes "Coder produced 0 files" from generic
+// step failures so bench analytics can detect regressions where the model
+// went silent on a step it should have edited.
+describe('Orchestrator noop step detection (v1.39-a)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reports noopStepIds in done.data when Coder returns no file changes', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [
+        { id: 'a', description: 'a', dependencies: [] },
+        { id: 'b', description: 'b', dependencies: [] },
+      ],
+    });
+
+    // Coder returns 0 files for step `b` only — this is the L2.4/L2.6 scenario
+    // the v1.35 step_noop event was introduced for. `a` proceeds normally.
+    let coderCalls = 0;
+    (orch as unknown as { coder: { execute: ReturnType<typeof vi.fn> } }).coder = {
+      execute: vi.fn(async () => {
+        coderCalls++;
+        if (coderCalls === 2) return { files: [] };
+        return { files: [{ action: 'create', path: `step-${coderCalls}.ts`, content: 'x' }] };
+      }),
+    };
+
+    const taskId = 'task-noop-1';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      await orch.runTask(taskId, 'mixed noop');
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    // step_noop event still fires (pre-existing v1.35 contract)
+    expect(captured.find(e => e.type === 'step_noop')).toBeDefined();
+
+    const doneEvent = captured.find(e => e.type === 'done');
+    expect(doneEvent).toBeDefined();
+    const doneData = doneEvent!.data as { noopStepIds: string[]; failedStepIds: string[] };
+    expect(doneData.noopStepIds.length).toBe(1);
+    expect(doneData.failedStepIds).toContain(doneData.noopStepIds[0]);
   });
 });
 
