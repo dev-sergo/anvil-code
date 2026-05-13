@@ -780,6 +780,7 @@ export class Orchestrator {
     let attempt = 0;
     const MAX_RETRIES = config.JOB_MAX_RETRIES;
     let isApproved = false;
+    let lastReviewIssues: string[] | null = null;
 
     while (attempt < MAX_RETRIES && !isApproved) {
       attempt++;
@@ -789,6 +790,7 @@ export class Orchestrator {
         isApproved = true;
         log.info({ stepId: step.id, attempt }, 'Step approved by Reviewer');
       } else {
+        lastReviewIssues = review.issues;
         log.warn({ stepId: step.id, attempt, issues: review.issues }, 'Reviewer found issues, running Fixer');
 
         this.store.saveADR({
@@ -851,7 +853,12 @@ export class Orchestrator {
     }
 
     if (!isApproved) {
-      throw new Error(`Reviewer rejected step ${step.id} after ${MAX_RETRIES} attempts.`);
+      // Include last Reviewer issues in the error so step_fail carries diagnostic
+      // info visible in bench stream (no separate log access needed).
+      const lastIssues = (lastReviewIssues ?? []).slice(0, 3).join(' | ').slice(0, 300);
+      throw new Error(
+        `Reviewer rejected step ${step.id} after ${MAX_RETRIES} attempts.${lastIssues ? ` Last issues: ${lastIssues}` : ''}`,
+      );
     }
 
     return currentChanges;
