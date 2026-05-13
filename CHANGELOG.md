@@ -13,6 +13,14 @@
 
 ---
 
+## v1.41.1 — H5 bench task fix + Reviewer issues diagnostic (2026-05-14)
+
+**Reviewer issues in step_fail:** `lastReviewIssues` captured in Reviewer loop and included in the `Reviewer rejected after N attempts` error message (up to 3 issues, 300 chars). Surfaces in bench stream without needing log access. Revealed H5 root cause immediately.
+
+**H5 getHeader bench task reformulation:** Original task referenced `packages/hono/src/utils/index.ts` (non-existent). Real hono layout: `src/utils/headers.ts` already exists. Fixed task: add `getHeader(c: Context, name: string)` directly to `src/utils/headers.ts`, delegate to `c.req.header(name)`, type-import Context. Result: **2/2 ✅** (71s, 64s). Pattern history: v1.38 `no_op` → v1.41 `reviewer_reject` (noop retry helped) → v1.41.1 ✅ (task fix). Bench: [2026-05-14-h5-getHeader-bench.md](docs/benchmarks/runs/2026-05-14-h5-getHeader-bench.md).
+
+---
+
 ## v1.41 — Parse-fail retry + NoopStep retry (2026-05-14)
 
 **v1.41-a — Planner + Architect parse-fail retry:** Both `PlannerAgent.execute()` and `ArchitectAgent.execute()` now retry once on `LLM output parsing failed` — Gemma occasionally truncates JSON or prepends a preamble, killing the whole step/task. Retry fires only for parse errors (other exceptions propagate). Architect falls back to empty design if both attempts fail. Effect: L4.1 0/3 → 2/3.
