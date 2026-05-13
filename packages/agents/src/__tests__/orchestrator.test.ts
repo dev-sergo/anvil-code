@@ -753,6 +753,39 @@ describe('TesterAgent post-generation TS validation (v1.40-a)', () => {
     expect(captured.find(e => e.type === 'error')).toBeUndefined();
   });
 
+  it('discards test files with no it()/test() calls (empty describe — Rule 9)', async () => {
+    const { orch } = buildOrchestrator({
+      steps: [{ id: 'a', description: 'a', dependencies: [] }],
+    });
+
+    (orch as unknown as { tester: { execute: ReturnType<typeof vi.fn> } }).tester = {
+      execute: vi.fn().mockResolvedValue({
+        testFiles: [{
+          action: 'create',
+          path: 'src/__tests__/empty.test.ts',
+          // Has a describe but no it() — vitest "No test found in suite"
+          content: "import { describe } from 'vitest';\ndescribe('empty', () => {});\n",
+        }],
+      }),
+    };
+
+    const taskId = 'task-tester-empty-suite';
+    const captured: TaskEvent[] = [];
+    const handler = (e: TaskEvent) => captured.push(e);
+    taskEvents.on(`task:${taskId}`, handler);
+    try {
+      await expect(orch.runTask(taskId, 'empty suite')).resolves.toBeUndefined();
+    } finally {
+      taskEvents.off(`task:${taskId}`, handler);
+    }
+
+    // Task completes — empty test file was discarded before validation.
+    expect(captured.find(e => e.type === 'done')).toBeDefined();
+    expect(captured.find(e => e.type === 'error')).toBeUndefined();
+    // validation_pass (no test file interference)
+    expect(captured.find(e => e.type === 'validation_pass')).toBeDefined();
+  });
+
   it('continues without any test files when tester execute throws', async () => {
     const { orch } = buildOrchestrator({
       steps: [{ id: 'a', description: 'a', dependencies: [] }],

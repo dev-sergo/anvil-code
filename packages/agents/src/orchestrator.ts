@@ -926,10 +926,24 @@ export class Orchestrator {
   ): Promise<FileChange[]> {
     if (testFiles.length === 0) return [];
 
-    const tsTestFiles = testFiles.filter(
+    // Content guard (Rule 9): discard files that have no it()/test() call — an
+    // empty describe causes vitest "No test found in suite" which fails validation.
+    // This is a string-level check (TypeScript cannot catch it) done before tsc.
+    const hasTestCalls = (content: string) => /\bit\s*\(|\btest\s*\(/.test(content);
+    const contentFiltered = testFiles.filter(f => {
+      const content = f.action === 'create' ? f.content : '';
+      if (!hasTestCalls(content)) {
+        logger.warn({ path: f.path }, 'TesterAgent: discarding test file with no it()/test() calls');
+        return false;
+      }
+      return true;
+    });
+    if (contentFiltered.length === 0) return [];
+
+    const tsTestFiles = contentFiltered.filter(
       f => f.path.endsWith('.ts') || f.path.endsWith('.tsx'),
     );
-    if (tsTestFiles.length === 0) return testFiles; // no TS to check — pass through
+    if (tsTestFiles.length === 0) return contentFiltered; // no TS to check — pass through
 
     const backups = new Map<string, string | null>();
     const written: string[] = [];
