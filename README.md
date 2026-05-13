@@ -1,4 +1,17 @@
-# RAG System
+<p align="center">
+  <img src="assets/banner.svg" alt="Anvil-Code banner" width="820"/>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="MIT License"/></a>
+  <img src="https://img.shields.io/badge/TypeScript-5.4+-3178c6.svg" alt="TypeScript"/>
+  <img src="https://img.shields.io/badge/Node.js-18+-339933.svg" alt="Node.js"/>
+  <img src="https://img.shields.io/badge/tests-534%20passed-22c55e.svg" alt="534 tests"/>
+  <img src="https://img.shields.io/badge/bench%20sandbox-87.5%25-22c55e.svg" alt="87.5% sandbox"/>
+  <img src="https://img.shields.io/badge/bench%20real--repo-38%25-f97316.svg" alt="38% real repos"/>
+</p>
+
+---
 
 Local AI assistant for TypeScript development. Submit a task in plain English; the system plans, writes code, validates, and commits — entirely on your machine. No cloud, no subscriptions, no telemetry.
 

@@ -1,0 +1,37 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="a" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#cbd5e1"/>
+      <stop offset="100%" stop-color="#475569"/>
+    </linearGradient>
+    <linearGradient id="b" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="200" height="200" rx="36" fill="url(#b)"/>
+  <rect width="200" height="200" rx="36" fill="none" stroke="#1e293b" stroke-width="1.5"/>
+
+  <!-- Top table -->
+  <rect x="30" y="64" width="140" height="18" rx="5" fill="url(#a)"/>
+
+  <!-- Horn (left) -->
+  <polygon points="50,86 14,101 50,116" fill="url(#a)"/>
+
+  <!-- Body -->
+  <polygon points="55,82 145,82 145,130 55,130" fill="url(#a)"/>
+
+  <!-- Base -->
+  <rect x="26" y="128" width="148" height="18" rx="5" fill="url(#a)"/>
+
+  <!-- Shadow line between table and body -->
+  <line x1="55" y1="82" x2="145" y2="82" stroke="#0f172a" stroke-width="1" opacity="0.4"/>
+
+  <!-- Code accent: /> -->
+  <!-- slash -->
+  <line x1="88" y1="120" x2="98" y2="96"  stroke="#f97316" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- > right bracket -->
+  <polyline points="104,95 116,103 104,111" stroke="#f97316" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

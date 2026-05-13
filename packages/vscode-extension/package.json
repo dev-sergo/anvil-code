@@ -1,13 +1,15 @@
 {
   "name": "rag-system-vscode",
-  "displayName": "RAG System",
-  "description": "VSCode sidebar for the local RAG System: projects, live task progress, semantic indexing.",
+  "displayName": "Anvil-Code",
+  "description": "Autonomous TypeScript coding agent — local LLM, no cloud. Submit tasks, watch live SSE stream, inspect results.",
   "version": "0.1.0",
   "publisher": "rag-system",
   "license": "MIT",
+  "icon": "assets/icon.png",
   "repository": { "type": "git", "url": "https://github.com/BubnovSA/anvil-code.git" },
   "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
+  "categories": ["Other", "Machine Learning"],
+  "keywords": ["ai", "llm", "local-ai", "typescript", "code-assistant", "rag"],
   "activationEvents": ["onStartupFinished"],
   "main": "./dist/extension.js",
   "contributes": {

@@ -1,0 +1,86 @@
+<svg width="820" height="200" viewBox="0 0 820 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#0d1117"/>
+    </linearGradient>
+    <linearGradient id="anvil" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#cbd5e1"/>
+      <stop offset="100%" stop-color="#475569"/>
+    </linearGradient>
+    <!-- Subtle grid pattern for depth -->
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="820" height="200" fill="url(#bg)" rx="12"/>
+  <rect width="820" height="200" fill="url(#grid)" rx="12" opacity="0.5"/>
+  <rect width="820" height="200" fill="none" stroke="#1e293b" stroke-width="1.5" rx="12"/>
+
+  <!-- ── Anvil icon (left, 100×100 centered at 100,100) ── -->
+  <!-- Top table -->
+  <rect x="50" y="52" width="100" height="14" rx="4" fill="url(#anvil)"/>
+  <!-- Horn -->
+  <polygon points="62,66 35,78 62,90" fill="url(#anvil)"/>
+  <!-- Body -->
+  <polygon points="65,64 150,64 150,102 65,102" fill="url(#anvil)"/>
+  <!-- Base -->
+  <rect x="47" y="100" width="111" height="14" rx="4" fill="url(#anvil)"/>
+  <!-- shadow seam -->
+  <line x1="65" y1="64" x2="150" y2="64" stroke="#0f172a" stroke-width="1" opacity="0.3"/>
+  <!-- /> accent inside anvil -->
+  <line x1="91" y1="94" x2="99" y2="76"  stroke="#f97316" stroke-width="3.5" stroke-linecap="round"/>
+  <polyline points="104,75 114,82 104,89" stroke="#f97316" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- ── Divider ── -->
+  <line x1="190" y1="44" x2="190" y2="156" stroke="#1e293b" stroke-width="1.5"/>
+
+  <!-- ── Text block ── -->
+  <!-- Title -->
+  <text x="218" y="94"
+        font-family="ui-monospace,SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace"
+        font-size="38" font-weight="700" fill="#f1f5f9" letter-spacing="-0.5">
+    Anvil-Code
+  </text>
+
+  <!-- Orange underscore accent line -->
+  <rect x="218" y="100" width="220" height="3" rx="1.5" fill="#f97316" opacity="0.8"/>
+
+  <!-- Tagline -->
+  <text x="218" y="128"
+        font-family="ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"
+        font-size="15" fill="#94a3b8" letter-spacing="0.2">
+    Autonomous TypeScript coding agent · 100% local · No cloud
+  </text>
+
+  <!-- Stats / pills -->
+  <!-- Pill 1: sandbox -->
+  <rect x="218" y="148" width="126" height="22" rx="11" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+  <circle cx="233" cy="159" r="4" fill="#22c55e"/>
+  <text x="244" y="163"
+        font-family="ui-monospace,SFMono-Regular,Consolas,monospace"
+        font-size="11" fill="#94a3b8">87.5% sandbox</text>
+
+  <!-- Pill 2: real repos -->
+  <rect x="354" y="148" width="122" height="22" rx="11" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+  <circle cx="369" cy="159" r="4" fill="#f97316"/>
+  <text x="380" y="163"
+        font-family="ui-monospace,SFMono-Regular,Consolas,monospace"
+        font-size="11" fill="#94a3b8">38% real repos</text>
+
+  <!-- Pill 3: TypeScript -->
+  <rect x="486" y="148" width="96" height="22" rx="11" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+  <circle cx="501" cy="159" r="4" fill="#3b82f6"/>
+  <text x="512" y="163"
+        font-family="ui-monospace,SFMono-Regular,Consolas,monospace"
+        font-size="11" fill="#94a3b8">TypeScript</text>
+
+  <!-- Pill 4: MIT -->
+  <rect x="592" y="148" width="62" height="22" rx="11" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+  <circle cx="607" cy="159" r="4" fill="#a855f7"/>
+  <text x="618" y="163"
+        font-family="ui-monospace,SFMono-Regular,Consolas,monospace"
+        font-size="11" fill="#94a3b8">MIT</text>
+</svg>
