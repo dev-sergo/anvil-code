@@ -13,6 +13,14 @@
 
 ---
 
+## v1.40 — TesterAgent validation (2026-05-14)
+
+**v1.40-a:** `Orchestrator.validateAndFilterTestFiles()` — after `tester.execute()`, applies generated test files to disk and runs `typeChecker.runOn(testPaths)`. Files whose path appears in tsc error output are discarded and disk state restored. Closes `body is not defined` class of failures (L1.1 r2 in v1.39 bench): L1.1 goes 2/3 → **3/3**.
+
+**v1.40-b (content guard):** Pre-disk regex check discards files with no `it()/test()` call — empty `describe` blocks are TypeScript-valid but cause vitest "No test found in suite" at runtime (L4.1 r1 in v1.40 bench). Check happens before tsc write. TesterAgent prompt rules 11–12 added: declare variables before use; avoid fragile list-length assertions without controlled state. Bench: [2026-05-14-v1.40-tester-validation.md](docs/benchmarks/runs/2026-05-14-v1.40-tester-validation.md). **551/551 unit tests.**
+
+---
+
 ## v1.39 — Cumulative mode, validation abort guard, Reviewer-reject Fixer (2026-05-14)
 
 **v1.39-a — Cumulative merge-wait + noop detection:** `CUMULATIVE_MODE=true` (env, default off) makes each successful task ff-merge its `auto/task-*` branch into `auto/cumulative` (configurable via `CUMULATIVE_BRANCH`). Next task forks from accumulated state instead of racing against `defaultBranch`. On non-ff conflict: `cumulative_merge_failed` event fired, branch retained for manual review, task still completes as `done`. `NoopStepError` added to distinguish "Coder 0 files" from generic step failures; `done.data.noopStepIds[]` exposed for bench analytics. `TaskEventType` extended with `cumulative_merged`, `cumulative_merge_failed`. +9 unit tests (5 git-engine, 4 orchestrator).
