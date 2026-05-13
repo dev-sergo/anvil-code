@@ -8,13 +8,13 @@
 | rag-system revision | `8fb56d6` |
 | Iteration tag | v1.34.1 (post-BM25 hybrid search) |
 | LLM_BACKEND | llamacpp |
-| LLM_URL | `http://172.20.10.4:8080` |
+| LLM_URL | `http://localhost:8080` |
 | LLM_LARGE_MODEL | `qwen-coder-long` |
 | LLM_SMALL_MODEL | `qwen3` |
 | TOOL_CALLING_CODER | true |
 | TESTER_ENABLED | false |
 | Mode | balanced |
-| Sandbox | `/Users/admin/Documents/work/rag-system-sandbox` (Fastify+Zod+Vitest users API, ~6 файлов) |
+| Sandbox | `~/rag-system-sandbox` (Fastify+Zod+Vitest users API, ~6 файлов) |
 | Cumulative? | no — каждая задача на чистом main |
 
 **Цель:** ответить на главный открытый вопрос — работает ли система на multi-file задачах (2–5 файлов). Предыдущие L2.1/L2.2 на v1.33 дали 0/3; v1.34 добавил BM25, может изменить картину.

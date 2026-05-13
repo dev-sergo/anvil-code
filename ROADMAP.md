@@ -8,7 +8,7 @@
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
-**Backend:** llama-swap (`172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
+**Backend:** llama-swap (local endpoint, see `.env`), tool-calling Coder/Fixer дефолт.
 **Тесты:** 530+/530+ unit-tests, 12/12 пакетов чисто.
 **Последнее обновление:** 2026-05-13.
 
@@ -183,11 +183,11 @@
 
 ## Ссылки
 
-- **История:** [CHANGELOG.md](CHANGELOG.md) (полный архив v1.0 → v1.32-d)
+- **История:** [CHANGELOG.md](CHANGELOG.md)
 - **Design docs:** [docs/designs/](docs/designs/)
-- **Bench runs:** [docs/benchmarks/runs/](docs/benchmarks/runs/) (26 файлов, 2026-04-27 → 2026-05-05)
+- **Bench runs:** [docs/benchmarks/runs/](docs/benchmarks/runs/)
 - **Bench methodology:** [docs/benchmarks/README.md](docs/benchmarks/README.md), [tasks.md](docs/benchmarks/tasks.md)
-- **llama-swap reference:** [docs/llama-api-reference.md](docs/llama-api-reference.md)
-- **LLM tools survey:** [docs/llm-tools-and-practices.md](docs/llm-tools-and-practices.md)
-- **Sandbox:** `/Users/admin/Documents/work/rag-system-sandbox` (clean state per L1/L2 bench)
-- **Scale target:** `/Users/admin/Documents/work/rag-system-target` (91 файл TS, 6717 LOC)
+- **llama-swap setup:** [docs/SETUP.md](docs/SETUP.md)
+- **Architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- **Sandbox:** `rag-system-sandbox/` (clean state per L1/L2 bench)
+- **Scale target:** `rag-system-target/` (91 файл TS, dogfood target)

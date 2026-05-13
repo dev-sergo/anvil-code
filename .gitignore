@@ -27,9 +27,10 @@ backups/
 .env.local
 .env.*.local
 
-# IDE
+# IDE / tool configs (contain local paths)
 .vscode/settings.json
 .idea/
+.roo/
 *.swp
 *.swo
 *~

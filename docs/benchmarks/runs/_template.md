@@ -8,7 +8,7 @@
 | rag-system revision | `git rev-parse --short HEAD` |
 | Iteration tag | v1.X (what this run tests) |
 | LLM_BACKEND | llamacpp / ollama |
-| LLM_URL | `http://172.20.10.4:8080` (llamacpp) / `http://172.20.10.4:11434` (ollama) |
+| LLM_URL | `http://localhost:8080` (llamacpp) / `http://localhost:11434` (ollama) |
 | LLM_LARGE_MODEL | `qwen-coder-long` / `coder` / `qwen-coder` / ... |
 | LLM_SMALL_MODEL | `qwen3` / `qwen` / ... |
 | EMBED_BACKEND | llamacpp / ollama (default = LLM_BACKEND) |
@@ -17,7 +17,7 @@
 | TESTER_ENABLED | true / false |
 | PLANNER_MAX_STEPS | N |
 | Other ENV diffs from default | ... |
-| Sandbox / target | `/Users/admin/Documents/work/rag-system-sandbox` / `rag-system-target` (91 файл) / другое |
+| Sandbox / target | `/path/to/sandbox` / `/path/to/target` / другое |
 | Cumulative? | no (each task on clean main) / yes (chained) |
 
 ## Tasks
