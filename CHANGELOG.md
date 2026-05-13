@@ -6,6 +6,20 @@
 
 ---
 
+## v1.38 — Real-repo sprint + public release prep (2026-05-13)
+
+**Real-repo diagnostic + fixes (sprint D1–D2, коммит `67562de`):** Запуск 18 задач на `honojs/hono` (326 файлов) и `trpc/trpc` (714 файлов) дал **0/18 коммитов** в День 1. Шесть фиксов в День 2: (1) `Promise.race([])` hang в `executePlanParallel` когда все шаги синхронно скипнуты; (2) **baseline detection** — tsc+test failures на чистом репо считаются один раз и фильтруются из validation (snapshot-фейлы hono перестают блокировать); (3) `MAX_READ_LINES=350`, `HISTORY_KEEP_TAIL=4`, repo-map budget 5 KB, prompt-context 10 KB — режут context overflow с 33% до ~10%; (4) RAG-retrieved paths теперь read-only для Coder — больше нет destructive side-effect edits (cache/index.ts → 42 строки); (5) `applyAndCheckTs` исключает test files из pre-Reviewer TS check; (6) `runValidationLoop` использует `runOn(prodPaths)` вместо полного tsc. **Результат: 6/16 (38%) на реальных репо** — JSDoc/count/parseQS/requestId (hono), onError/getErrCode (trpc). Bench: [2026-05-12-real-repo-diagnostic.md](docs/benchmarks/runs/2026-05-12-real-repo-diagnostic.md).
+
+**VSCode extension finalize:** Кэш `commit` события теперь включает `commitHash` (`orchestrator.ts` ловит возврат `git.commitChanges`). Extension добавил: (a) команда `RAG System: Submit Task` (раньше `Run Task`) с inline-выбором проекта когда active не выбран; (b) второй StatusBar item трекает phase задачи (queued / running / planning / step / validate / committed) и гасится после стрима; (c) `notifyTerminal` — toast по `done`/`error` с `committed N files @ <hash>`, `commit skipped`, или `partial`; (d) `formatEventLine` отображает `commit`/`commit_skipped`/`commit_partial` с числами файлов и хешом; (e) `rag.showOutput` команда для клика по статус-бару. Контракт: `commit.data` теперь `{ fileCount, commitHash }` (обратная совместимость).
+
+**Cleanup + .env.example sync:** Удалены untracked `.DS_Store` и `turbo-build.log` (уже в .gitignore). `.env.example` дополнен 7 недостающими переменными (`PROJECT_REGISTRY_PATH`, `PROJECTS_AUTO_REGISTER_DEFAULT`, `VECTORS_PATH`, `GRAPHS_PATH`, `BACKUPS_PATH`, `BACKUP_MAX_AGE_DAYS`, `BACKUP_PRUNE_INTERVAL_HOURS`); `LLM_LARGE_MODEL=gemma` зафиксирован как validated default (v1.35 7/8 L2.x); `RAG_MAX_CONTEXT_TOKENS=1500` задокументирован с объяснением trade-off под 8K/16K ctx модели. 12/12 пакетов компилируются, 530+/530+ тестов.
+
+**Документация (публичная упаковка):** Переписан `README.md` — честные ожидания (что работает / что нет), реальные числа sandbox 87.5% / hono 38% / trpc 38%, 5-шаговый quickstart с llama-swap. Создан `BENCHMARK.md` — методология, scoring axes, по-категорийные таблицы, sprint D1→D2 транзишн, failure patterns. Создан `docs/SETUP.md` — установка llama-swap + GGUFs, рекомендуемый model stack, troubleshooting матрица. Создан `docs/ARCHITECTURE.md` — поток task→commit (ASCII диаграмма), agent responsibilities, API surface, packages map, как добавить нового агента.
+
+**Скоуп v1.38 закрыт.** Готовность к public-релизу: `git tag v1.38`, GitHub visibility → public, добавить topics (`typescript`, `llm`, `rag`, `local-ai`, `code-assistant`, `multi-agent`).
+
+---
+
 ## v1.37 — TESTER_ENABLED=true fix + comprehensive bench (2026-05-11)
 
 **TesterAgent fixes (3 патча):** (1) Правило 9 — каждый testFiles entry должен содержать хотя бы один `it()`; пустой `describe` вызывает "No test found" в vitest → теперь явно запрещён. (2) Fastify test pattern — `FastifyInstance` вместо `ReturnType<typeof Fastify>` (TS1361 в некоторых конфигурациях). (3) TestRunner: фильтр "No test found in suite" — артефакт TesterAgent, не реальный тест-фейл; не блокирует коммит.

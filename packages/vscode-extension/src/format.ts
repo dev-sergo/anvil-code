@@ -80,8 +80,20 @@ export function formatEventLine(e: TaskEvent): string {
       return `[${ts}] VALID✓  ${e.message ?? ''}`;
     case 'validation_fail':
       return `[${ts}] VALID✗  ${e.message ?? ''}`;
-    case 'commit':
-      return `[${ts}] COMMIT  ${e.message ?? ''}`;
+    case 'commit': {
+      const d = e.data as { fileCount?: number; commitHash?: string } | undefined;
+      const hash = d?.commitHash ? d.commitHash.slice(0, 8) : '';
+      const files = d?.fileCount !== undefined ? `${d.fileCount} file(s)` : '';
+      return `[${ts}] COMMIT  ${[files, hash, e.message].filter(Boolean).join(' · ')}`;
+    }
+    case 'commit_skipped': {
+      const d = e.data as { fileCount?: number; issuesCount?: number } | undefined;
+      return `[${ts}] SKIP    ${d?.fileCount ?? 0} file(s), ${d?.issuesCount ?? 0} unresolved issue(s) — ${e.message ?? ''}`;
+    }
+    case 'commit_partial': {
+      const d = e.data as { failedStepIds?: string[]; completedSteps?: number; totalSteps?: number } | undefined;
+      return `[${ts}] PART    ${d?.completedSteps ?? 0}/${d?.totalSteps ?? 0} step(s) · failed=${(d?.failedStepIds ?? []).join(',')}`;
+    }
     case 'done':
       return `[${ts}] DONE    ${e.message ?? ''}`;
     case 'error':

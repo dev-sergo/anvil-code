@@ -41,9 +41,9 @@ describe('FEATURE_SPEC — invariants', () => {
     expect(FEATURE_SPEC.agentName).toBe('Coder(tool-calling)');
     expect(FEATURE_SPEC.agentRole).toBe('coder');
   });
-  it('maxToolCalls=50, pruneHistory=false, emitPerFileEvents=true', () => {
+  it('maxToolCalls=50, pruneHistory=true (v1.35+), emitPerFileEvents=true', () => {
     expect(FEATURE_SPEC.maxToolCalls).toBe(50);
-    expect(FEATURE_SPEC.pruneHistory).toBe(false);
+    expect(FEATURE_SPEC.pruneHistory).toBe(true);
     expect(FEATURE_SPEC.emitPerFileEvents).toBe(true);
   });
   it('forbiddenPatterns equals ALWAYS_FORBIDDEN_PATTERNS (no test-path ban)', () => {
@@ -115,9 +115,9 @@ describe('REFACTOR_SPEC — invariants', () => {
     expect(REFACTOR_SPEC.kind).toBe('refactor');
     expect(REFACTOR_SPEC.agentName).toBe('Refactor(tool-calling)');
   });
-  it('maxToolCalls=40, pruneHistory=false', () => {
+  it('maxToolCalls=40, pruneHistory inherits from FEATURE_SPEC', () => {
     expect(REFACTOR_SPEC.maxToolCalls).toBe(40);
-    expect(REFACTOR_SPEC.pruneHistory).toBe(false);
+    expect(REFACTOR_SPEC.pruneHistory).toBe(FEATURE_SPEC.pruneHistory);
   });
   it('reuses FEATURE_SPEC scope discipline (same forbidden patterns + buildAllowedSet)', () => {
     expect(REFACTOR_SPEC.forbiddenPatterns).toEqual(FEATURE_SPEC.forbiddenPatterns);

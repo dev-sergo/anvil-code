@@ -4,13 +4,13 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.37 done (2026-05-11). TESTER_ENABLED=true работает ✅. L5.x bench 14/16 (87.5%) ✅. Cumulative mode 5/6 ✅.
+**Статус:** 🟢 v1.38 done (2026-05-13) — публичный релиз готов. Реальные репо: hono 38%, trpc 38% (sprint D1→D2 фиксы). Sandbox держится 87.5%. VSCode extension stable. Документация (README, BENCHMARK, SETUP, ARCHITECTURE) переписана.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
-**TESTER_ENABLED:** true — 28/28 vitest tests на DELETE endpoint. Trade-off: невалидные тесты (_clear) блокируют.
-**RAG_MAX_CONTEXT_TOKENS:** 3000 (работает на sandbox + 94-файловый target).
+**TESTER_ENABLED:** true.
+**RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
 **Backend:** llama-swap (`172.20.10.4:8080`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 530/530 unit-tests, 12/12 пакетов чисто.
-**Последнее обновление:** 2026-05-11.
+**Тесты:** 530+/530+ unit-tests, 12/12 пакетов чисто.
+**Последнее обновление:** 2026-05-13.
 
 ---
 
@@ -29,7 +29,7 @@
 | `job-system` | 🟢 100% | MemoryQueue, JobWorker (multi-project, graceful shutdown) |
 | `api` | 🟢 100% | Fastify + CORS + rate-limit; /health, /task, /task/:id, /task/:id/stream (SSE), /tasks, /index, /projects, /project/:id, POST /project |
 | `mcp-server` | 🟢 100% | stdio transport; 7 tools + 4 resources + 4 prompts; multi-project через project_id |
-| `vscode-extension` | 🟢 100% | esbuild → ~18KB; activity bar + Projects/Tasks TreeView; OutputChannel формат SSE; команды Run Task / Index / Register |
+| `vscode-extension` | 🟢 100% | esbuild → ~18KB; activity bar + Projects/Tasks TreeView; SSE OutputChannel + 2 StatusBar items (project + phase); terminal toast с commit hash; команды Submit Task / Index / Register / Show Output |
 
 ---
 
@@ -114,12 +114,17 @@
 - [x] Cumulative mode: 5/6 ✅, race condition documented
 - [x] rag-system-target setup: main branch, tsconfig, npm build
 
-#### v1.38 — Next (📋)
+#### v1.38 — Real-repo sprint + public release prep — ✅ 2026-05-13
 
-- [ ] BUGFIX_SPEC: паттерн для `_clear()` → `UserService.list().forEach(u => UserService.delete(u.id))`
-- [ ] Cumulative pipeline: explicit merge-wait между задачами в worker
-- [ ] Другой реальный репозиторий (200+ файлов, не наш код)
-- [ ] Push + GitHub release
+- [x] **Sprint D1:** диагностика hono (326 файлов) + trpc (714 файлов) → 0/18 коммитов, каталог failure patterns
+- [x] **Sprint D2:** 6 фиксов — `Promise.race([])` hang, baseline detection (filter pre-existing failures), context budget (`MAX_READ_LINES=350`, `HISTORY_KEEP_TAIL=4`, repo-map 5KB, prompt-context 10KB), RAG paths read-only для Coder, `applyAndCheckTs` skip test files, `runValidationLoop` использует `prodPaths`
+- [x] **Результат после D2:** 6/16 (~38%) на реальных репо (JSDoc/count/parseQS/requestId на hono, onError/getErrCode на trpc)
+- [x] VSCode extension finalize: `commit.commitHash` в событиях, второй StatusBar для phase, terminal notification, `Submit Task` команда с inline project picker
+- [x] Cleanup: untracked `.DS_Store`/turbo-logs убраны, `.env.example` дополнен 7 переменными
+- [x] Документация: переписаны `README.md`, `BENCHMARK.md`, `docs/SETUP.md`, `docs/ARCHITECTURE.md`
+- [x] Push + GitHub release: `git tag v1.38`, visibility → public, topics
+- [x] **Bench:** [2026-05-12-real-repo-diagnostic.md](docs/benchmarks/runs/2026-05-12-real-repo-diagnostic.md)
+- [ ] **Не закрыто (перенесено в v1.39+):** cumulative pipeline merge-wait между задачами в worker; BUGFIX_SPEC паттерн для `_clear()` → `list().forEach(u => delete(u.id))`
 
 ### Phase 5 — Production storage (📋 после Phase 4)
 
@@ -140,20 +145,21 @@
 
 ---
 
-## Известные ограничения
+## Известные ограничения (актуально на v1.38)
 
-| Ограничение | Severity | Mitigation |
+| Ограничение | Severity | Mitigation / план |
 |---|---|---|
-| Cumulative state регрессирует на всех локальных 32B моделях | HIGH (фундаментальное) | Phase 4 v1.35 multi-hop closure — partial mitigation |
-| 24GB VRAM cap → потолок 32B Q4, не достичь Sonnet/GPT-4 reasoning | HIGH (hardware) | Реалистичная цель: 70-80% задач локально |
-| Coder/Fixer prompt-accretion (model adaptation) | MEDIUM | Регулярные prompt-консолидации (v1.32-a.3 pattern) |
-| HNSW JSON cap ~10K элементов | MEDIUM | Phase 5 v1.40 Qdrant |
-| 1-hop dependencies, нет transitive closure | MEDIUM | Phase 5 (v1.40+) |
-| TesterAgent на vitest эмитит jest-style mocks | LOW | `TESTER_ENABLED=false` workaround |
-| Нет hybrid search (BM25 fallback) | LOW-MED | Phase 4 v1.34 |
-| Нет re-ranker | LOW-MED | Phase 4 v1.33 |
+| Real-repo success rate ~38% (vs sandbox 87.5%) | HIGH | Context budget уже зажат; следующий рычаг — multi-hop retrieval + scope discipline (v1.40+) |
+| Cumulative state регрессирует на всех локальных 32B моделях | HIGH (фундаментальное) | v1.39+ explicit merge-wait worker; полное решение требует Sonnet-class модель |
+| Большие классы (>700 строк) ломают structural-anchor lookup | HIGH | Лучшая disambiguation; anchors v2 (line+signature) |
+| Complex generics (tRPC-style builders) превышают контекст | HIGH | 32K ctx модель уже используется (gemma); upper bound уперт в 24GB VRAM |
+| Cross-service refactoring (callsites в 8 файлах) теряет часть | HIGH | 1-hop graph traversal → multi-hop в v1.41 |
+| 24GB VRAM cap → потолок 32B Q4 | HIGH (hardware) | Реалистичная цель: 70-80% atomic / 30-40% multi-file локально |
+| HNSW JSON cap ~10K элементов | MEDIUM | v1.40 Qdrant migration |
+| TesterAgent на vitest эмитит jest-style mocks | LOW-MED | `TESTER_ENABLED=false` workaround |
 | Нет task cancellation `POST /task/:id/cancel` | LOW | UX nice-to-have |
 | Нет observability (Langfuse/OTel) | LOW | pino + бенчмарки покрывают для single-user local |
+| SSE стримит только структурированные events, не raw LLM tokens | LOW | Roadmap item; не блокирует UX |
 
 ---
 

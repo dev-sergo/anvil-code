@@ -27,13 +27,14 @@
       ]
     },
     "commands": [
-      { "command": "rag.refresh", "title": "RAG: Refresh", "icon": "$(refresh)" },
-      { "command": "rag.connect", "title": "RAG: Set API URL" },
-      { "command": "rag.runTask", "title": "RAG: Run Task", "icon": "$(play)" },
-      { "command": "rag.indexProject", "title": "RAG: Index Active Project", "icon": "$(database)" },
-      { "command": "rag.registerProject", "title": "RAG: Register Project", "icon": "$(add)" },
-      { "command": "rag.selectActiveProject", "title": "RAG: Select Active Project" },
-      { "command": "rag.streamTask", "title": "RAG: Stream Task Progress" }
+      { "command": "rag.refresh", "title": "RAG System: Refresh", "icon": "$(refresh)" },
+      { "command": "rag.connect", "title": "RAG System: Set API URL" },
+      { "command": "rag.runTask", "title": "RAG System: Submit Task", "icon": "$(play)" },
+      { "command": "rag.indexProject", "title": "RAG System: Index Active Project", "icon": "$(database)" },
+      { "command": "rag.registerProject", "title": "RAG System: Register Project", "icon": "$(add)" },
+      { "command": "rag.selectActiveProject", "title": "RAG System: Select Active Project" },
+      { "command": "rag.streamTask", "title": "RAG System: Stream Task Progress" },
+      { "command": "rag.showOutput", "title": "RAG System: Show Output" }
     ],
     "menus": {
       "view/title": [

@@ -22,7 +22,10 @@ vi.mock('@rag-system/safe-exec', () => ({
     get root() { return '/tmp'; }
   },
   TestRunner: class { run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' }); },
-  TypeChecker: class { run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' }); },
+  TypeChecker: class {
+    run = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' });
+    runOn = vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 0, skipped: 'mock' });
+  },
   PrettierRunner: class {
     run = vi.fn().mockResolvedValue({ success: true, formatted: [], output: '', durationMs: 0, skipped: 'mock' });
   },
@@ -61,7 +64,7 @@ function buildOrchestrator(opts: {
   const writer = { execute: vi.fn(), root: '/tmp' };
   const git = {
     createBranchForTask: vi.fn().mockResolvedValue(undefined),
-    commitChanges: vi.fn().mockResolvedValue(undefined),
+    commitChanges: vi.fn().mockResolvedValue('abc12345deadbeef0000000000000000abcdef00'),
   };
 
   const orch = new Orchestrator(
@@ -297,17 +300,21 @@ describe('Orchestrator per-step recovery', () => {
       steps: [{ id: 'a', description: 'step a', dependencies: [] }],
     });
 
-    // Force a typecheck failure so the validation loop actually runs Fixer.
-    // First call fails; subsequent calls pass to give the loop a way to exit
-    // cleanly if the Fixer write IS swallowed.
+    // v1.35+ flow: typeChecker is called by (1) computeBaseline at task start,
+    // (2) applyAndCheckTs pre-Reviewer check, then (3+) the validation loop.
+    // Calls 1-2 pass so we reach validation; calls 3+ keep failing so the Fixer
+    // is invoked and write-throws are exercised. Pins the validation-loop crash
+    // behavior, not the pre-check.
     let typeCheckCalls = 0;
-    (orch as unknown as { typeChecker: { run: ReturnType<typeof vi.fn> } }).typeChecker = {
-      run: vi.fn(async () => {
-        typeCheckCalls++;
-        return typeCheckCalls === 1
-          ? { success: false, output: 'TS2304: Cannot find name X', exitCode: 2, durationMs: 5 }
-          : { success: false, output: 'TS2304: Cannot find name X', exitCode: 2, durationMs: 5 };
-      }),
+    const failingTypeCheck = vi.fn(async () => {
+      typeCheckCalls++;
+      return typeCheckCalls <= 2
+        ? { success: true, output: '', exitCode: 0, durationMs: 5 }
+        : { success: false, output: 'TS2304: Cannot find name X', exitCode: 2, durationMs: 5 };
+    });
+    (orch as unknown as { typeChecker: { run: typeof failingTypeCheck; runOn: typeof failingTypeCheck } }).typeChecker = {
+      run: failingTypeCheck,
+      runOn: failingTypeCheck,
     };
 
     // Validation Fixer returns a modify edit that the writer will reject.
@@ -360,15 +367,19 @@ describe('Orchestrator per-step recovery', () => {
       }),
     };
 
-    // First TypeChecker call fails; second (after Fixer) passes.
+    // v1.35+ flow: 3 typeChecker call sites — (1) computeBaseline, (2) applyAndCheckTs,
+    // (3+) validation loop. Calls 1-2 pass so the test exercises the validation-loop
+    // Fixer aggregation. Call 3 fails (validation iter 1), call 4 passes (post-Fixer).
     let typeCalls = 0;
-    (orch as unknown as { typeChecker: { run: ReturnType<typeof vi.fn> } }).typeChecker = {
-      run: vi.fn(async () => {
-        typeCalls++;
-        return typeCalls === 1
-          ? { success: false, output: 'AssertionError: expected user.createdAt to be truthy', exitCode: 1, durationMs: 5 }
-          : { success: true, output: '', exitCode: 0, durationMs: 5 };
-      }),
+    const flakyTypeCheck = vi.fn(async () => {
+      typeCalls++;
+      if (typeCalls <= 2) return { success: true, output: '', exitCode: 0, durationMs: 5 };
+      if (typeCalls === 3) return { success: false, output: 'AssertionError: expected user.createdAt to be truthy', exitCode: 1, durationMs: 5 };
+      return { success: true, output: '', exitCode: 0, durationMs: 5 };
+    });
+    (orch as unknown as { typeChecker: { run: typeof flakyTypeCheck; runOn: typeof flakyTypeCheck } }).typeChecker = {
+      run: flakyTypeCheck,
+      runOn: flakyTypeCheck,
     };
     (orch as unknown as { testRunner: { run: ReturnType<typeof vi.fn> } }).testRunner = {
       run: vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 5 }),
@@ -411,14 +422,17 @@ describe('Orchestrator per-step recovery', () => {
       }),
     };
 
+    // Calls: 1=computeBaseline, 2=applyAndCheckTs, 3=validation iter 1 (fail), 4+=after Fixer (pass).
     let typeCalls = 0;
-    (orch as unknown as { typeChecker: { run: ReturnType<typeof vi.fn> } }).typeChecker = {
-      run: vi.fn(async () => {
-        typeCalls++;
-        return typeCalls === 1
-          ? { success: false, output: 'TS2304', exitCode: 1, durationMs: 5 }
-          : { success: true, output: '', exitCode: 0, durationMs: 5 };
-      }),
+    const flakyTypeCheck = vi.fn(async () => {
+      typeCalls++;
+      if (typeCalls <= 2) return { success: true, output: '', exitCode: 0, durationMs: 5 };
+      if (typeCalls === 3) return { success: false, output: 'TS2304', exitCode: 1, durationMs: 5 };
+      return { success: true, output: '', exitCode: 0, durationMs: 5 };
+    });
+    (orch as unknown as { typeChecker: { run: typeof flakyTypeCheck; runOn: typeof flakyTypeCheck } }).typeChecker = {
+      run: flakyTypeCheck,
+      runOn: flakyTypeCheck,
     };
     (orch as unknown as { testRunner: { run: ReturnType<typeof vi.fn> } }).testRunner = {
       run: vi.fn().mockResolvedValue({ success: true, output: '', exitCode: 0, durationMs: 5 }),

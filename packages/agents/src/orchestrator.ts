@@ -255,12 +255,13 @@ export class Orchestrator {
         );
       }
 
-      await this.git.commitChanges(taskId, `Complete task: ${description.substring(0, 50)}`, writtenFiles);
+      const commitHash = await this.git.commitChanges(taskId, `Complete task: ${description.substring(0, 50)}`, writtenFiles);
+      const hashSuffix = commitHash ? ` — ${commitHash.slice(0, 8)}` : '';
       taskEvents.emitEvent({
         taskId,
         type: 'commit',
-        message: `Committed ${writtenFiles.length} file(s)`,
-        data: { fileCount: writtenFiles.length },
+        message: `Committed ${writtenFiles.length} file(s)${hashSuffix}`,
+        data: { fileCount: writtenFiles.length, commitHash },
       });
     } else if (writtenFiles.length > 0 && shouldSkipCommit) {
       log.warn({ issuesCount: validation.issuesCount }, 'Skipping commit — validation failed');

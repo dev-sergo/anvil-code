@@ -381,7 +381,7 @@ describe('pruneHistory', () => {
   }
 
   it('does nothing when history is below threshold', () => {
-    const messages = buildLongHistory(5); // 2 + 10 = 12 messages, under threshold
+    const messages = buildLongHistory(3); // 2 + 6 = 8 messages, at threshold (≤8 → no prune)
     const before = messages.length;
     const pruned = pruneHistory(messages);
     expect(pruned).toBe(false);
@@ -415,12 +415,12 @@ describe('pruneHistory', () => {
   it('after pruning, total message count fits the configured budget', () => {
     const messages = buildLongHistory(50); // 2 + 100 = 102 messages
     pruneHistory(messages);
-    // 2 head + 1 note + 16 tail = 19
-    expect(messages.length).toBe(19);
+    // 2 head + 1 note + 4 tail = 7 (v1.38 sprint-D2 context fix: TAIL was 16, now 4)
+    expect(messages.length).toBe(7);
   });
 
   it('returns true when pruning fired and false otherwise', () => {
-    expect(pruneHistory(buildLongHistory(5))).toBe(false);
-    expect(pruneHistory(buildLongHistory(20))).toBe(true);
+    expect(pruneHistory(buildLongHistory(3))).toBe(false);   // 8 messages, at threshold
+    expect(pruneHistory(buildLongHistory(20))).toBe(true);  // 42 messages, well over
   });
 });

@@ -1,26 +1,41 @@
 # RAG System
 
-**Local autonomous coding agent.** Give it a task in plain English; it plans, writes code, runs tests, fixes failures, and commits — entirely on your machine.
+Local AI assistant for TypeScript development. Submit a task in plain English; the system plans, writes code, validates, and commits — entirely on your machine. No cloud, no subscriptions, no telemetry.
 
 ```
-POST /task  →  Planner  →  Coder  →  Reviewer  →  Fixer (retry ×3)  →  git commit
+POST /task  →  Planner  →  Coder  →  Tester  →  Reviewer  →  Fixer (retry ×3)  →  git commit
 ```
 
-No cloud. No subscriptions. Any OpenAI-compatible LLM backend.
+Designed for solo developers who want an autonomous coding agent that runs on their own GPU. Built on llama.cpp / llama-swap, so any GGUF model with an OpenAI-compatible endpoint works.
 
 ---
 
-## What it does
+## What it does (and what to expect)
 
-- Decomposes a natural-language task into a DAG of steps (Planner)
-- Writes TypeScript/JavaScript files using structural AST tools (`add_method`, `replace_function`, …) with line-level fallback (Coder)
-- Runs the project's test suite and iterates through a validation loop until tests pass (Fixer)
-- Commits the result to an isolated branch with a structured message (Git Engine)
-- Indexes your codebase with hybrid BM25 + dense vector search (RRF) for context retrieval
+The system is good at:
 
-## Architecture
+- **Adding new files** — utility modules, middleware, helpers. ~90% success on sandbox tasks.
+- **JSDoc / TSDoc and small edits** — adding types, comments, simple refactors inside a single file.
+- **Adding a route or endpoint** — Fastify-style `app.METHOD(...)` registrations with handler + validation.
+- **Bugfixes localized to one file** — when the failing test points unambiguously at the fix site.
+- **Indexing and searching your repo** — hybrid BM25 + dense vector retrieval with AST graph traversal.
 
-The system is a **Turborepo monorepo** of 12 TypeScript packages. An HTTP API (Fastify) accepts tasks and queues them for an async Worker. The Worker hands each task to an Orchestrator that runs agents in sequence: Planner decomposes the task, Coder produces file changes via tool-calling, Reviewer checks the result, and a validation loop invokes Fixer (up to 3 attempts) if tests fail. All file writes go through Safe Exec (backup → diff → write) and are committed via Git Engine to a `auto/task-*` branch. Context is supplied by a RAG Engine that combines an HNSW vector index with a BM25 keyword index and a graph traversal step over an AST-derived code graph.
+The system is **not yet good at**:
+
+- **Large class surgery** — files over ~700 lines confuse the tool-calling Coder; structural anchor lookups drift.
+- **Complex generic refactors** — generic-heavy TypeScript (e.g. tRPC-style builders) frequently exceeds context.
+- **Cross-service refactoring** — multi-file consistency rewrites (rename a method across 8 files) often miss callsites.
+- **Cumulative state across tasks** — task N+1 cannot reliably build on task N's output yet. Each task is independent.
+
+Honest numbers, last bench (v1.37, May 2026):
+
+| Target                              | Tasks | Pass rate |
+|-------------------------------------|-------|-----------|
+| `rag-system-sandbox` (curated bench, 30 files) | L1–L5 | **87.5 %** (14/16) |
+| `honojs/hono` (real OSS, ~150 files)            | L1–L3 | **38 %** (varies) |
+| `trpc/trpc` (real OSS, ~200 files)              | L1–L3 | **38 %** (varies) |
+
+See [BENCHMARK.md](BENCHMARK.md) for full methodology, failure modes, and per-task results.
 
 ---
 
@@ -31,100 +46,141 @@ The system is a **Turborepo monorepo** of 12 TypeScript packages. An HTTP API (F
 | Node.js | 18 LTS |
 | npm | 9+ |
 | Git | 2.30+ |
-| LLM backend | llama-swap, llama-server, or any OpenAI-compatible `/v1/chat/completions` endpoint |
+| RAM | 16 GB |
+| GPU VRAM | **24 GB** (for the recommended Gemma 4 26B coder) — 16 GB works with smaller models at lower success rate |
+| LLM backend | [llama-swap](https://github.com/mostlygeek/llama-swap), llama-server, or any OpenAI-compatible `/v1/chat/completions` endpoint |
 
-Tested with **llama-swap** fronting:
-- `qwen-coder-long` — coder/fixer/architect (16 K context required)
-- `qwen3` — planner/reviewer/tester
-- `nomic-embed-text-v1.5` (`embed` alias) — embeddings (768 dim)
-- a cross-encoder reranker (`reranker` alias)
+Tested model stack (recommended):
+
+| Role | Alias | Model |
+|---|---|---|
+| Large (coder / fixer / architect) | `gemma` | gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k |
+| Small (planner / reviewer / tester) | `qwen3` | qwen3-35B-A3B MoE (3 B active) |
+| Embed | `embed` | nomic-embed-text-v1.5 (768 dim) |
+| Reranker (optional) | `reranker` | bge-reranker-v2-m3 |
+
+A capable Mac Studio / RTX 4090 box keeps all of these in VRAM with llama-swap handling load/unload between roles.
 
 ---
 
-## Quickstart
+## Quickstart (5 steps)
 
-### 1. Start your LLM backend
+### 1. Run an LLM backend
 
-Configure [llama-swap](https://github.com/mostlygeek/llama-swap) with the model aliases above, or point any OpenAI-compatible server at port 8080.
+Install [llama-swap](https://github.com/mostlygeek/llama-swap), put your GGUFs in `~/models/`, declare the aliases above in `config.yaml`, and start the proxy. It exposes a single OpenAI-compatible endpoint that load-swaps models in VRAM on demand.
 
-### 2. Clone and build
+See [docs/SETUP.md](docs/SETUP.md) for the full llama-swap config we benchmark against.
+
+### 2. Clone, install, build
 
 ```bash
-git clone https://github.com/bubnovsa/rag-system.git
-cd rag-system
+git clone https://github.com/BubnovSA/rag-system-for-dev.git
+cd rag-system-for-dev
 npm install
 npm run build
 ```
 
-### 3. Configure environment
+### 3. Configure `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-Key variables (see `.env.example` for the full list):
+Edit at minimum:
 
 ```env
-LLM_BACKEND=llamacpp
-LLM_URL=http://localhost:8080
-LLM_LARGE_MODEL=qwen-coder-long
-LLM_SMALL_MODEL=qwen3
-LLM_EMBED_MODEL=embed
-PROJECT_ROOT=/path/to/your/repo
+LLM_URL=http://localhost:8080        # your llama-swap endpoint
+LLM_LARGE_MODEL=gemma                # validated default since v1.35
+PROJECT_ROOT=/absolute/path/to/your/repo
 ```
 
-### 4. Start the API
+Every variable in `.env.example` is documented inline.
+
+### 4. Start the API server
 
 ```bash
-source .env   # or: set -a && . .env && set +a
-node packages/api/dist/index.js
+npm run start
 ```
 
-Server starts on `http://localhost:3000`.
+Server starts on `http://localhost:3000`. Verify:
 
-### 5. Install the VS Code extension
+```bash
+curl http://localhost:3000/health
+# {"status":"ok","backend":"llamacpp","backendUp":true,"uptime":...}
+```
+
+### 5. Submit a task
+
+**Via VS Code extension (recommended):**
 
 ```bash
 cd packages/vscode-extension
-npm run build
-npx vsce package        # produces rag-system-vscode-*.vsix
+npm run package      # produces rag-system-vscode-*.vsix
 ```
 
-In VS Code: **Extensions → ⋯ → Install from VSIX…** → select the `.vsix` file.
+In VS Code: **Extensions → ⋯ → Install from VSIX…** Pick the `.vsix`, then run **RAG System: Submit Task** from the command palette. Pick project + mode in the prompts and watch the SSE stream in the **RAG System** output channel.
 
-The extension adds a **RAG System** panel in the Activity Bar. Set the API URL (`RAG: Set API URL`), register your project, and submit tasks from the sidebar.
-
-### 6. Submit your first task
-
-Via curl:
+**Via curl:**
 
 ```bash
+# Register the project once
+curl -X POST http://localhost:3000/project \
+  -H "Content-Type: application/json" \
+  -d '{"root": "/absolute/path/to/your/repo"}'
+
+# Submit a task (replace <id> with the project id returned above)
 curl -X POST http://localhost:3000/task \
   -H "Content-Type: application/json" \
-  -d '{"task": "Add input validation to the POST /users endpoint", "projectRoot": "/path/to/your/repo"}'
-```
+  -d '{"task": "Add request-id middleware to the Fastify server", "project": "<id>", "mode": "balanced"}'
 
-Poll for status:
-
-```bash
-curl http://localhost:3000/task/<task_id>
+# Stream events (Server-Sent Events)
+curl -N http://localhost:3000/task/<task_id>/stream
 ```
 
 ---
 
-## Known limitations
+## Limitations
 
-- **TypeScript / JavaScript only** — the AST parser and structural edit tools are TS-native; other languages fall back to line-based edits.
-- **Context scales to ~50-file projects** — retrieval works well on small/medium codebases; repos larger than ~90 files hit the 16 K context window on complex multi-file tasks (L2+ bench level). Multi-hop closure is planned post-release.
-- **No streaming** — `GET /task/:id` returns final status only; the VS Code extension polls. SSE streaming is on the roadmap.
-- **Single machine** — no auth, no multi-user isolation. Designed for personal local use.
-- **Fixer is probabilistic** — the validation loop improves reliability but does not guarantee a passing commit on every run; `COMMIT_ONLY_IF_VALID=true` (default) skips the commit rather than landing broken code.
+- **TypeScript / JavaScript first.** Python, Rust, Go are parsed for context (tree-sitter), but the structural edit tools (`add_method`, `replace_function`, …) are TS-native. Other languages fall back to line-based edits with lower success rate.
+- **Context window: ~16 K tokens.** With 24 GB VRAM and 26 B models, this is the hard ceiling for what fits per request. Tasks needing more get truncated retrieval — the system retrieves top-K, not the whole repo.
+- **Single machine, single user.** No auth, no multi-user isolation, no remote workers.
+- **No streaming agent tokens (yet).** The SSE endpoint streams structured events (plan, step, file, validation, commit, done), not raw LLM tokens.
+- **Fixer is probabilistic.** The validation loop retries up to 3× on test/type failures. If it doesn't converge, `COMMIT_ONLY_IF_VALID=true` (default) leaves changes on an `auto/task-*` branch uncommitted rather than landing broken code.
+- **Cumulative tasks regress on local 32 B models.** Submitting task N+1 that builds on task N's output is unreliable — design limitation of the model class, not the orchestrator.
+
+---
+
+## Architecture
+
+Turborepo monorepo of 12 TypeScript packages. The API (Fastify) accepts tasks and queues them for an async Worker. The Worker calls the Orchestrator, which runs agents in sequence:
+
+1. **Planner** decomposes the task into a DAG of typed steps.
+2. **Architect** plans file-level changes (where applicable).
+3. **Coder** (tool-calling) reads files, makes structural edits via `read_file` / `replace_in_file` / `create_file` / `delete_file`.
+4. **Tester** generates tests for new code.
+5. **Validation loop**: TypeScript check → test run → if failing, **Fixer** retries (max 3).
+6. **Reviewer** does a final lenient pass — blocks only on runtime bugs, not style.
+7. **Git Engine** commits to an `auto/task-*` branch.
+
+Context is supplied by a **RAG Engine** combining an HNSW vector index, a BM25 keyword index (merged via RRF), and a 1-hop graph traversal over an AST-derived code graph.
+
+Full diagram and per-package responsibilities: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+---
+
+## Documentation
+
+- [docs/SETUP.md](docs/SETUP.md) — installing llama-swap, model picks, hardware notes
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — agents, data flow, package map
+- [BENCHMARK.md](BENCHMARK.md) — methodology + raw numbers
+- [ROADMAP.md](ROADMAP.md) — current iteration, known limitations, next 2–3 versions
+- [CHANGELOG.md](CHANGELOG.md) — version history (v1.0 → v1.38)
 
 ---
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+This is primarily a personal project, but contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
