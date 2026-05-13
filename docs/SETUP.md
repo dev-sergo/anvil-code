@@ -111,8 +111,8 @@ Full endpoint reference: [llama-api-reference.md](llama-api-reference.md).
 ### 3a. Clone and build
 
 ```bash
-git clone https://github.com/BubnovSA/rag-system-for-dev.git
-cd rag-system-for-dev
+git clone https://github.com/BubnovSA/anvil-code.git
+cd anvil-code
 npm install
 npm run build
 ```

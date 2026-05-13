@@ -9,8 +9,8 @@
 ## Setup
 
 ```bash
-git clone https://github.com/bubnovsa/rag-system.git
-cd rag-system
+git clone https://github.com/BubnovSA/anvil-code.git
+cd anvil-code
 npm install
 npm run build
 ```

@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "publisher": "rag-system",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/bubnovsa/rag-system.git" },
+  "repository": { "type": "git", "url": "https://github.com/BubnovSA/anvil-code.git" },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "activationEvents": ["onStartupFinished"],

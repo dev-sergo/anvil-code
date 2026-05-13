@@ -74,8 +74,8 @@ See [docs/SETUP.md](docs/SETUP.md) for the full llama-swap config we benchmark a
 ### 2. Clone, install, build
 
 ```bash
-git clone https://github.com/BubnovSA/rag-system-for-dev.git
-cd rag-system-for-dev
+git clone https://github.com/BubnovSA/anvil-code.git
+cd anvil-code
 npm install
 npm run build
 ```
