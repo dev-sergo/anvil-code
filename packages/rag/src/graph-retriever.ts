@@ -52,12 +52,18 @@ export class GraphRetriever {
   private embedModelLabel: string;
   private parser: ASTParser;
   private store: RetrieverStore | null = null;
+  private graphsDir: string;
+  // v1.42 — monorepo meta: tsconfig.json paths + package.json exports,
+  // parsed at index time and injected as a pinned ContextItem so LLM
+  // always knows the correct import aliases for workspace packages.
+  private monorepoMeta: string | null = null;
   // Global semaphore — caps concurrent embed network calls (Ollama or
   // llama-swap, depending on backend) across all in-flight files & symbols.
   // Cache hits don't acquire it.
   private embedSemaphore: Semaphore;
 
   constructor(store?: RetrieverStore, paths?: { vectorsDir?: string; graphsDir?: string }) {
+    this.graphsDir = path.resolve(paths?.graphsDir ?? config.rag.graphsPath);
     this.vectorStore = new VectorStore(paths?.vectorsDir);
     this.codeGraph = new CodeGraph(paths?.graphsDir);
     this.bm25Index = new BM25Index();
@@ -66,6 +72,7 @@ export class GraphRetriever {
     this.parser = new ASTParser();
     this.store = store ?? null;
     this.embedSemaphore = new Semaphore(config.rag.embedConcurrency);
+    this.loadMonorepoMeta();
   }
 
   private async embedWithCache(text: string, mode: EmbedMode): Promise<number[]> {
@@ -95,6 +102,100 @@ export class GraphRetriever {
     return this.codeGraph;
   }
 
+  // v1.42 — load persisted monorepo meta from disk (written by indexMonorepoMeta).
+  private loadMonorepoMeta(): void {
+    const metaPath = path.join(this.graphsDir, 'monorepo-meta.json');
+    if (!fs.existsSync(metaPath)) return;
+    try {
+      const raw = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as { text: string };
+      this.monorepoMeta = raw.text ?? null;
+      if (this.monorepoMeta) {
+        logger.debug({ lines: this.monorepoMeta.split('\n').length }, 'Monorepo meta loaded from disk');
+      }
+    } catch {
+      // Corrupt file — ignore; will be rewritten at next indexCodebase.
+    }
+  }
+
+  // v1.42 — parse tsconfig.json `compilerOptions.paths` and each workspace
+  // package's `package.json#exports` into a single human-readable text block.
+  // Called during indexCodebase so the data is always fresh. Persists to
+  // `graphsDir/monorepo-meta.json` for reload across API restarts.
+  private async indexMonorepoMeta(rootDir: string): Promise<void> {
+    const lines: string[] = [];
+
+    // 1. tsconfig.json paths aliases
+    const tsconfigCandidates = ['tsconfig.json', 'tsconfig.base.json'];
+    for (const candidate of tsconfigCandidates) {
+      const tsconfigPath = path.join(rootDir, candidate);
+      if (!fs.existsSync(tsconfigPath)) continue;
+      try {
+        const tsconfig = JSON.parse(fs.readFileSync(tsconfigPath, 'utf8')) as {
+          compilerOptions?: { paths?: Record<string, string[]> };
+          extends?: string;
+        };
+        const paths = tsconfig.compilerOptions?.paths;
+        if (paths && Object.keys(paths).length > 0) {
+          lines.push('TypeScript module aliases — use these import paths, never raw relative paths across packages:');
+          for (const [alias, targets] of Object.entries(paths)) {
+            if (!Array.isArray(targets) || targets.length === 0) continue;
+            // Skip wildcard duplicates if non-wildcard already listed
+            const base = alias.replace('/*', '');
+            if (alias.endsWith('/*') && lines.some(l => l.includes(`  ${base} →`))) continue;
+            lines.push(`  ${alias} → ${(targets as string[])[0]}`);
+          }
+        }
+      } catch { /* malformed JSON — skip */ }
+      break; // first found wins
+    }
+
+    // 2. Per-package exports (walk packages/* looking for package.json)
+    const packagesDir = path.join(rootDir, 'packages');
+    if (fs.existsSync(packagesDir)) {
+      const pkgDirs = fs.readdirSync(packagesDir, { withFileTypes: true })
+        .filter(d => d.isDirectory())
+        .map(d => d.name);
+
+      const exportLines: string[] = [];
+      for (const pkgDir of pkgDirs) {
+        const pkgJsonPath = path.join(packagesDir, pkgDir, 'package.json');
+        if (!fs.existsSync(pkgJsonPath)) continue;
+        try {
+          const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')) as {
+            name?: string;
+            exports?: Record<string, unknown>;
+          };
+          const name = pkg.name;
+          const exports = pkg.exports;
+          if (!name || !exports) continue;
+          const paths = Object.keys(exports).filter(k => k !== './package.json').slice(0, 8);
+          if (paths.length > 0) {
+            exportLines.push(`  ${name}: ${paths.join(', ')}`);
+          }
+        } catch { /* skip */ }
+      }
+      if (exportLines.length > 0) {
+        if (lines.length > 0) lines.push('');
+        lines.push('Package sub-path exports (valid import specifiers):');
+        lines.push(...exportLines);
+      }
+    }
+
+    if (lines.length === 0) {
+      this.monorepoMeta = null;
+      return;
+    }
+
+    this.monorepoMeta = lines.join('\n');
+    fs.mkdirSync(this.graphsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(this.graphsDir, 'monorepo-meta.json'),
+      JSON.stringify({ text: this.monorepoMeta, updatedAt: new Date().toISOString() }),
+      'utf8',
+    );
+    logger.info({ rootDir, lines: lines.length }, 'Monorepo meta indexed and saved');
+  }
+
   async retrieveContext(query: string): Promise<string> {
     const items = await this.retrieveContextItems(query, 5);
     if (items.length === 0) return '';
@@ -102,85 +203,107 @@ export class GraphRetriever {
   }
 
   async retrieveContextItems(query: string, k = 5): Promise<ContextItem[]> {
-    if (this.vectorStore.size === 0) return [];
-
-    let queryVector: number[];
-    try {
-      queryVector = await this.embedWithCache(query, 'query');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.debug({ error: msg }, 'Embedding unavailable, skipping RAG context');
-      return [];
-    }
-
-    const useReranker = config.rag.rerankerEnabled && typeof this.embedClient.rerank === 'function';
-    const useBM25 = config.rag.bm25Enabled && this.bm25Index.size > 0;
-    const candidateCount = useReranker ? config.rag.rerankerCandidates : k;
-
-    let candidates = await this.vectorStore.search(queryVector, candidateCount);
-    if (candidates.length === 0) return [];
-
-    if (useBM25) {
-      const bm25Results = this.bm25Index.search(query, config.rag.bm25Candidates);
-      const mergedIds = BM25Index.rrf(
-        candidates.map(c => c.id),
-        bm25Results.map(r => r.id),
-      );
-      const denseById = new Map(candidates.map(c => [c.id, c]));
-      candidates = mergedIds.map(id => denseById.get(id) ?? { id, distance: 0 });
-      logger.debug(
-        { dense: candidates.length, bm25: bm25Results.length, merged: mergedIds.length },
-        'RAG BM25 hybrid merge applied',
-      );
-    }
-
-    let results = candidates;
-    if (useReranker) {
-      const symbols = candidates.map(c => this.codeGraph.getSymbol(c.id));
-      const docs = symbols.map(s => s ? `${s.kind} ${s.name}: ${s.text}`.slice(0, 400) : '');
-      try {
-        const ranked = await this.embedClient.rerank!(query, docs);
-        results = ranked.slice(0, k).map(r => candidates[r.index]);
-        logger.debug({ candidates: candidates.length, reranked: results.length }, 'RAG reranker applied');
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logger.warn({ error: msg }, 'Reranker failed, falling back to HNSW order');
-        results = candidates.slice(0, k);
-      }
-    }
+    // v1.42 — monorepo meta is always injected regardless of vector index size.
+    // v1.42: return early only when BOTH index is empty AND no meta is available.
+    if (this.vectorStore.size === 0 && !this.monorepoMeta) return [];
 
     const items: ContextItem[] = [];
     let tokenEstimate = 0;
     const maxTokens = config.rag.maxContextTokens;
 
-    for (const result of results) {
-      const symbol = this.codeGraph.getSymbol(result.id);
-      if (!symbol) continue;
+    // Vector + BM25 + reranker retrieval — skipped when index is empty.
+    if (this.vectorStore.size > 0) {
+      let queryVector: number[];
+      try {
+        queryVector = await this.embedWithCache(query, 'query');
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.debug({ error: msg }, 'Embedding unavailable, skipping RAG context');
+        queryVector = [];
+      }
 
-      const snippetTokens = Math.ceil(symbol.text.length / 4);
-      if (tokenEstimate + snippetTokens > maxTokens) break;
+      if (queryVector.length > 0) {
+        const useReranker = config.rag.rerankerEnabled && typeof this.embedClient.rerank === 'function';
+        const useBM25 = config.rag.bm25Enabled && this.bm25Index.size > 0;
+        const candidateCount = useReranker ? config.rag.rerankerCandidates : k;
 
-      items.push({
-        symbolName: symbol.name,
-        filePath: symbol.filePath,
-        startLine: symbol.startLine,
-        endLine: symbol.endLine,
-        text: symbol.text,
-      });
-      tokenEstimate += snippetTokens;
+        let candidates = await this.vectorStore.search(queryVector, candidateCount);
 
-      const deps = this.codeGraph.getDependencies(result.id);
-      for (const dep of deps.slice(0, 2)) {
-        const depTokens = Math.ceil(dep.text.length / 4);
-        if (tokenEstimate + depTokens > maxTokens) break;
+        if (useBM25) {
+          const bm25Results = this.bm25Index.search(query, config.rag.bm25Candidates);
+          const mergedIds = BM25Index.rrf(
+            candidates.map(c => c.id),
+            bm25Results.map(r => r.id),
+          );
+          const denseById = new Map(candidates.map(c => [c.id, c]));
+          candidates = mergedIds.map(id => denseById.get(id) ?? { id, distance: 0 });
+          logger.debug(
+            { dense: candidates.length, bm25: bm25Results.length, merged: mergedIds.length },
+            'RAG BM25 hybrid merge applied',
+          );
+        }
+
+        let results = candidates;
+        if (useReranker) {
+          const symbols = candidates.map(c => this.codeGraph.getSymbol(c.id));
+          const docs = symbols.map(s => s ? `${s.kind} ${s.name}: ${s.text}`.slice(0, 400) : '');
+          try {
+            const ranked = await this.embedClient.rerank!(query, docs);
+            results = ranked.slice(0, k).map(r => candidates[r.index]);
+            logger.debug({ candidates: candidates.length, reranked: results.length }, 'RAG reranker applied');
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.warn({ error: msg }, 'Reranker failed, falling back to HNSW order');
+            results = candidates.slice(0, k);
+          }
+        }
+
+        for (const result of results) {
+          const symbol = this.codeGraph.getSymbol(result.id);
+          if (!symbol) continue;
+
+          const snippetTokens = Math.ceil(symbol.text.length / 4);
+          if (tokenEstimate + snippetTokens > maxTokens) break;
+
+          items.push({
+            symbolName: symbol.name,
+            filePath: symbol.filePath,
+            startLine: symbol.startLine,
+            endLine: symbol.endLine,
+            text: symbol.text,
+          });
+          tokenEstimate += snippetTokens;
+
+          const deps = this.codeGraph.getDependencies(result.id);
+          for (const dep of deps.slice(0, 2)) {
+            const depTokens = Math.ceil(dep.text.length / 4);
+            if (tokenEstimate + depTokens > maxTokens) break;
+            items.push({
+              symbolName: dep.name,
+              filePath: dep.filePath,
+              startLine: dep.startLine,
+              endLine: dep.endLine,
+              text: dep.text,
+            });
+            tokenEstimate += depTokens;
+          }
+        }
+      }
+    }
+
+    // v1.42 — always append monorepo meta (tsconfig paths + package exports)
+    // as a pinned item so LLM knows the correct import aliases for workspace
+    // packages. Placed last so it never displaces primary symbol context.
+    if (this.monorepoMeta) {
+      const metaTokens = Math.ceil(this.monorepoMeta.length / 4);
+      if (tokenEstimate + metaTokens <= maxTokens) {
         items.push({
-          symbolName: dep.name,
-          filePath: dep.filePath,
-          startLine: dep.startLine,
-          endLine: dep.endLine,
-          text: dep.text,
+          symbolName: '__monorepo_imports__',
+          filePath: 'tsconfig.json',
+          startLine: 1,
+          endLine: 1,
+          text: this.monorepoMeta,
         });
-        tokenEstimate += depTokens;
       }
     }
 
@@ -350,6 +473,9 @@ export class GraphRetriever {
 
     await this.vectorStore.save();
     await this.codeGraph.saveToDisk();
+    // v1.42 — parse and persist monorepo meta (tsconfig paths + package exports)
+    // so the next retrieveContextItems call can inject it as a pinned item.
+    await this.indexMonorepoMeta(absRoot);
 
     const durationMs = Date.now() - startedAt;
     logger.info({ indexId, indexed, skipped, pruned, vectors: this.vectorStore.size, durationMs }, 'Codebase indexed');
