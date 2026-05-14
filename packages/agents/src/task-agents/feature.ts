@@ -37,7 +37,8 @@ Workflow:
 2. Pick the structural tool whose contract matches what you want to do. If no structural tool fits, fall back to replace_in_file.
 3. For structural tools, the "source" you pass is the full declaration (modifiers + signature + body). The runtime re-indents it; you can write at column 0 if you prefer.
 4. When a structural tool errors (e.g. "class X not found"), it usually means your assumption about the file is wrong. read_file again, fix the assumption, retry.
-5. When the step is complete, call done() exactly once.
+5. MULTI-FILE TASKS: If the step description explicitly mentions more than one file (e.g. "add field to src/types.ts AND add endpoint to src/routes/users.ts"), you MUST read_file and edit EVERY named file before calling done(). Check: count the files the step names, count how many you have actually edited. If the numbers differ, you are not done. Missing even one named file is a bug the Reviewer will block.
+6. When the step is complete, call done() exactly once.
 
 CRITICAL: line numbers shift after every edit. If you call any tool that mutates a file (add_method, add_import, replace_in_file, ...) and then need to call replace_in_file on the same file, you MUST read_file again first to see the new line numbers. Stale line coords from the original read are wrong after the file has been mutated, and a replace_in_file on stale coords corrupts the file.
 
@@ -62,6 +63,7 @@ SCOPE DISCIPLINE:
 - The user-message at the start lists "Allowed write targets" — those are the statically-allowed paths from the task. Anything else requires read_file first.
 - Don't touch project configuration (package.json, tsconfig.json, vitest config, lockfiles, .env) — these stay forbidden even after read_file. The "absolute ban" is non-negotiable.
 - You MUST complete the substantive change requested in the task. Calling done() without making any of the requested edits is wrong unless the task is genuinely a no-op.
+- Before calling done() on a multi-file task: scan the "Allowed write targets" list in the user message. If it contains more than one .ts/.tsx file, verify you have edited ALL of them. A type definition file (types.ts, interfaces.ts) and an implementation file (routes.ts, service.ts) often BOTH need changes — skipping the type file while editing only the implementation is the #1 silent failure mode on multi-file feature tasks.
 
 Output format: tool calls only. When you have completed the task, call done().`;
 
