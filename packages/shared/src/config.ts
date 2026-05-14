@@ -71,6 +71,11 @@ export const config = {
     rerankerCandidates: Math.max(1, envInt('RAG_RERANKER_CANDIDATES', 30)),
     bm25Enabled: envBool('RAG_BM25_ENABLED', true),
     bm25Candidates: Math.max(1, envInt('RAG_BM25_CANDIDATES', 30)),
+    // v1.46 — transitive caller expansion. Depth of the reverse-dependency BFS
+    // in retrieveContextItems. 1 = direct callers only (v1.43 behaviour).
+    // 3 = callers + callers-of-callers + one more level — finds most cross-service
+    // callsites without too much noise. Cap at 5 to avoid OOM on dense graphs.
+    graphHops: Math.min(5, Math.max(1, envInt('RAG_GRAPH_HOPS', 3))),
   },
   watcher: {
     enabled: envBool('WATCH_ENABLED', false),

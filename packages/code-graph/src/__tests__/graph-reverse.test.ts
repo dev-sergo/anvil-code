@@ -73,3 +73,57 @@ describe('CodeGraph reverse index (v1.43)', () => {
     expect(g.getCallers('NonExistent')).toHaveLength(0);
   });
 });
+
+describe('CodeGraph.getTransitiveCallers (v1.46)', () => {
+  it('finds callers at hop 1 (same as getCallers)', () => {
+    const g = new CodeGraph('/tmp/test-graphs');
+    g.addFile('src/a.ts', [sym('Service', 'class Service {}')]);
+    g.addFile('src/b.ts', [sym('Router', 'class Router { s = new Service(); }')]);
+
+    const seen = new Set<string>(['Service']);
+    const result = g.getTransitiveCallers(['Service'], 1, seen);
+    expect(result.map(r => r.name)).toContain('Router');
+  });
+
+  it('finds callers-of-callers at hop 2', () => {
+    const g = new CodeGraph('/tmp/test-graphs');
+    g.addFile('src/a.ts', [sym('UserService', 'class UserService {}')]);
+    g.addFile('src/b.ts', [sym('UserRouter', 'function UserRouter() { return new UserService(); }')]);
+    g.addFile('src/c.ts', [sym('App', 'function App() { UserRouter(); }')]);
+
+    const seen = new Set<string>(['UserService']);
+    const result = g.getTransitiveCallers(['UserService'], 2, seen);
+    const names = result.map(r => r.name);
+    expect(names).toContain('UserRouter'); // hop 1
+    expect(names).toContain('App');        // hop 2
+  });
+
+  it('stops at maxHops boundary', () => {
+    const g = new CodeGraph('/tmp/test-graphs');
+    g.addFile('a.ts', [sym('Alpha', 'class Alpha {}')]);
+    g.addFile('b.ts', [sym('Beta', 'class Beta extends Alpha {}')]);
+    g.addFile('c.ts', [sym('Gamma', 'class Gamma extends Beta {}')]);
+    g.addFile('d.ts', [sym('Delta', 'class Delta extends Gamma {}')]);
+
+    const seen = new Set<string>(['Alpha']);
+    const result = g.getTransitiveCallers(['Alpha'], 2, seen); // cap at 2 hops
+    const names = result.map(r => r.name);
+    expect(names).toContain('Beta');    // hop 1
+    expect(names).toContain('Gamma');   // hop 2
+    expect(names).not.toContain('Delta'); // hop 3 — excluded
+  });
+
+  it('deduplicates across BFS levels', () => {
+    const g = new CodeGraph('/tmp/test-graphs');
+    g.addFile('a.ts', [sym('Core', 'class Core {}')]);
+    g.addFile('b.ts', [sym('Widget', 'class Widget extends Core {}')]);
+    g.addFile('c.ts', [sym('Panel', 'class Panel extends Core {}')]); // also refers to Core
+
+    const seen = new Set<string>(['Core']);
+    const result = g.getTransitiveCallers(['Core'], 2, seen);
+    // Widget and Panel should each appear exactly once
+    const names = result.map(r => r.name);
+    expect(names.filter(n => n === 'Widget')).toHaveLength(1);
+    expect(names.filter(n => n === 'Panel')).toHaveLength(1);
+  });
+});

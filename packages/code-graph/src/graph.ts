@@ -63,6 +63,38 @@ export class CodeGraph {
     return callers;
   }
 
+  // v1.46 — BFS over the reverse index up to `maxHops` levels. Returns all
+  // symbols that transitively reference any name in `seeds`, deduplicating
+  // against `seen` (modified in-place so the caller can track across calls).
+  // Callers-of-callers surfaces the full cross-service callsite graph without
+  // an O(n²) scan — the reverse index makes each level O(callers).
+  getTransitiveCallers(
+    seeds: string[],
+    maxHops: number,
+    seen: Set<string>,
+  ): CodeSymbol[] {
+    const result: CodeSymbol[] = [];
+    // Seeds are the expansion roots — we want their callers, not the seeds
+    // themselves. Start frontier from seeds regardless of seen-status; seen
+    // is checked for the CALLERS we discover, not the seeds we expand from.
+    let frontier = [...seeds];
+
+    for (let hop = 0; hop < maxHops && frontier.length > 0; hop++) {
+      const nextFrontier: string[] = [];
+      for (const name of frontier) {
+        const callers = this.getCallers(name);
+        for (const caller of callers) {
+          if (seen.has(caller.name)) continue;
+          seen.add(caller.name);
+          result.push(caller);
+          nextFrontier.push(caller.name);
+        }
+      }
+      frontier = nextFrontier;
+    }
+    return result;
+  }
+
   getByFile(filePath: string): CodeSymbol[] {
     return this.symbols.get(filePath) ?? [];
   }

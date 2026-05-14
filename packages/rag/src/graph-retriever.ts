@@ -295,28 +295,35 @@ export class GraphRetriever {
       }
     }
 
-    // v1.43 — 2-hop: for each primary (top-k) symbol, add callers — symbols that
-    // reference it in their body. Surfaces usage context alongside definition.
-    // Critical for large files (dataLoader.ts 900+ lines): Coder sees HOW the
-    // symbol is used elsewhere, understands where to add new functionality.
+    // v1.46 — N-hop transitive caller BFS (was 1-hop in v1.43).
+    // Finds the full cross-service callsite graph: callers → callers-of-callers
+    // → ... up to RAG_GRAPH_HOPS levels. Each hop expands only the NEW symbols
+    // discovered in the previous level (frontier), so the work stays O(callsites)
+    // rather than O(n²). Deduplication against `seen` prevents double-counting.
+    // Token budget is enforced per symbol — the BFS stops naturally when the
+    // context window fills before exhausting all hops.
     if (primarySymbolNames.length > 0) {
       const seen = new Set(items.map(i => i.symbolName));
-      for (const primaryName of primarySymbolNames) {
-        const callers = this.codeGraph.getCallers(primaryName);
-        for (const caller of callers.slice(0, 3)) {
-          if (seen.has(caller.name)) continue;
-          const callerTokens = Math.ceil(caller.text.length / 4);
-          if (tokenEstimate + callerTokens > maxTokens) break;
-          items.push({
-            symbolName: caller.name,
-            filePath: caller.filePath,
-            startLine: caller.startLine,
-            endLine: caller.endLine,
-            text: caller.text,
-          });
-          seen.add(caller.name);
-          tokenEstimate += callerTokens;
-        }
+      // Mark primary symbols as seen so BFS doesn't re-add them.
+      for (const name of primarySymbolNames) seen.add(name);
+
+      const transitive = this.codeGraph.getTransitiveCallers(
+        primarySymbolNames,
+        config.rag.graphHops,
+        seen, // modified in-place by getTransitiveCallers
+      );
+
+      for (const caller of transitive) {
+        const callerTokens = Math.ceil(caller.text.length / 4);
+        if (tokenEstimate + callerTokens > maxTokens) break;
+        items.push({
+          symbolName: caller.name,
+          filePath: caller.filePath,
+          startLine: caller.startLine,
+          endLine: caller.endLine,
+          text: caller.text,
+        });
+        tokenEstimate += callerTokens;
       }
     }
 
