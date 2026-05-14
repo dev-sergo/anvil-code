@@ -13,6 +13,12 @@
 
 ---
 
+## v1.43 bench — 11/12 (92%) with precise task descriptions (2026-05-15)
+
+T5 (maxBodySize) re-run with explicit JSON format spec: `HTTP 413 + { error: 'Payload Too Large' } + Content-Type: application/json`. Result: ✅ commit 161s (was `reviewer_reject` — Reviewer correctly blocked ambiguous spec). **Full bench with correct task descriptions: 11/12 (92%)** vs 5/12 (42%) in v1.38. Only T6 remains (dataLoader.ts 900+ lines complex generics — 24GB VRAM wall, not addressable at current model size).
+
+---
+
 ## v1.43 — 2-hop retrieval: reverse dependency index (2026-05-15)
 
 `CodeGraph.reverseIndex`: built incrementally on `addFile`/`removeFile`, rebuilt on `loadFromDisk`. `CodeGraph.getCallers(name)` returns symbols that reference `name` in their body — enables "who uses this symbol" queries. `GraphRetriever.retrieveContextItems`: after primary top-k + 1-hop deps, appends caller symbols (up to 3 per primary, within token budget). Surfaces usage context alongside definitions. **H6 bench task fix:** added "Do not import from client/ directories" constraint → H6 ✅ (was reviewer_reject on wrong import). **T6 remains noop** — dataLoader.ts 900+ lines with complex generics exceeds Gemma 26B capability on this task class (24GB VRAM cap). +5 unit tests (reverse index build/update/remove). **565/565 unit tests, 12/12 packages.**

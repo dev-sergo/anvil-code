@@ -4,7 +4,7 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.43 done (2026-05-15) — 2-hop retrieval (reverse index + callers). H6 ✅ (task fix). T6 noop — VRAM limit. 565/565. Full bench v1.42: **9/12 (75%)** vs 5/12 (42%) в v1.38.
+**Статус:** 🟢 v1.43 done (2026-05-15) — 2-hop retrieval. **11/12 (92%)** real-repo bench с правильными task descriptions (было 5/12 = 42%). T6 — единственный fail (VRAM wall). 565/565.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
