@@ -13,6 +13,12 @@
 
 ---
 
+## v1.44 — TesterAgent runtime dry-run (2026-05-15)
+
+`TestRunner.runOn(paths)`: runs `npx vitest run -- path1 path2` on specific files. `validateAndFilterTestFiles`: after TS check passes, runs `testRunner.runOn(written)` — discards test files that fail at runtime. Catches wrong API format assertions (array vs `{users,total}` after pagination change) and timing-sensitive tests (rate limit counters) that TS check cannot detect. **C6 rate limiting ✅ in both cumulative bench runs** (was ❌ in v1.43 — timing-sensitive server.test.ts discarded, Coder's implementation commits cleanly). Bench: [2026-05-15-v1.44-cumulative-dryrun.md](docs/benchmarks/runs/2026-05-15-v1.44-cumulative-dryrun.md). 565/565 unit tests.
+
+---
+
 ## v1.43 cumulative mode bench (2026-05-15)
 
 6 sequential tasks on sandbox with `CUMULATIVE_MODE=true`. Result: **5/6 commits**, each task forks from `auto/cumulative` (accumulated state). `cumulative_merged` fires after every successful commit; ff-merge happens automatically with no manual work. v1.37 had same 5/6 score but required manual merge between tasks and had a race condition — both now eliminated. C4 (pagination) and C6 (rate limiting) fail on TesterAgent test quality, not cumulative logic. Bench: [2026-05-15-v1.39a-cumulative-mode.md](docs/benchmarks/runs/2026-05-15-v1.39a-cumulative-mode.md).
