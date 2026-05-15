@@ -695,5 +695,8 @@ describe('locateReplaceMethod v2 (v1.50)', () => {
     if (r.ok) return;
     expect(r.error).toMatch(/property arrow function/);
     expect(r.error).toMatch(/replace_in_file/);
+    // v1.55 — current content included so Coder skips the read_file round-trip
+    expect(r.error).toContain('header = (name: string): string | undefined =>');
+    expect(r.error).toMatch(/Current content \(lines \d+–\d+\)/);
   });
 });
