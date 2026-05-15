@@ -13,6 +13,12 @@
 
 ---
 
+## v1.48 Qdrant payload filter bench (2026-05-15)
+
+Re-indexed trpc (907 files → 2292 Qdrant vectors, 13s). Ran T2+T5 with `VECTOR_BACKEND=qdrant`. T2 `extractPackageScope("packages/server/src/http/...")` = `packages/server` → Qdrant search filtered to `packages/server/` files. **Pattern shift:** T2 was `ts_fail` (TS2307 bad import) with HNSW → `reviewer_reject` with Qdrant (Coder now finds correct files, but implementation names/imports still model-variance). T5 submission failed (JSON escape issue). Conclusion: payload filter improves retrieval precision (Coder reaches correct package), but implementation quality on complex trpc tasks remains at Gemma 26B capability boundary. Not a retrieval problem — a model problem.
+
+---
+
 ## v1.47 bench — 10/12 (83%), no Qdrant regression (2026-05-15)
 
 Full 12-task bench with HNSW backend (Qdrant separately smoke-tested ✅). Hono 6/6 (100%). tRPC 3/6: T2 ts_fail (wrong import path, model variance), T5 reviewer_reject (impl error, model variance), T6 noop (VRAM wall). Delta vs v1.43: -1 (10/12 vs 11/12) — pure model variance, no infrastructure regression from Qdrant addition. Bench: [2026-05-15-v1.47-full-12task.md](docs/benchmarks/runs/2026-05-15-v1.47-full-12task.md).
