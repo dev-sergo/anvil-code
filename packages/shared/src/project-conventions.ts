@@ -9,6 +9,11 @@ export interface ProjectConventions {
   needsJsSuffix: boolean;
   runtimeFrameworks: string[];
   entryPoints: string[];
+  // v1.51 — observed test file extension (e.g. ".test.ts", ".spec.ts").
+  // Detected by sampling existing test files in src/. TesterAgent uses this
+  // to generate paths the project's gitignore/test runner will accept —
+  // many projects gitignore .test.js and only allow .test.ts.
+  testFileExtension: string;
   summary: string;
 }
 
@@ -43,6 +48,7 @@ export function readProjectConventions(projectRoot: string): ProjectConventions 
 
   const runtimeFrameworks = KNOWN_FRAMEWORKS.filter(f => f in allDeps);
   const entryPoints = findEntryPoints(projectRoot);
+  const testFileExtension = detectTestFileExtension(projectRoot);
 
   const summary = buildSummary({
     testFramework,
@@ -52,9 +58,11 @@ export function readProjectConventions(projectRoot: string): ProjectConventions 
     needsJsSuffix,
     runtimeFrameworks,
     entryPoints,
+    testFileExtension,
   });
 
   return {
+    testFileExtension,
     testFramework,
     moduleType,
     tsStrict,
@@ -97,6 +105,57 @@ function normalizeModuleResolution(raw: string | undefined): ProjectConventions[
   return 'unknown';
 }
 
+// v1.51 — scan src/ recursively (depth-limited) for existing test files,
+// count occurrences of common test extensions, return the most frequent.
+// Falls back to '.test.ts' for TypeScript projects with no existing tests.
+function detectTestFileExtension(root: string): string {
+  const candidates = ['.test.ts', '.test.tsx', '.test.js', '.test.mjs', '.spec.ts', '.spec.js'];
+  const counts = new Map<string, number>(candidates.map(c => [c, 0]));
+  const seen = new Set<string>();
+
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 4) return; // limit recursion depth
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (seen.has(full)) continue;
+      seen.add(full);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+        if (entry.name === 'dist' || entry.name === 'build' || entry.name === 'coverage') continue;
+        walk(full, depth + 1);
+      } else if (entry.isFile()) {
+        for (const ext of candidates) {
+          if (entry.name.endsWith(ext)) {
+            counts.set(ext, (counts.get(ext) ?? 0) + 1);
+            break;
+          }
+        }
+      }
+    }
+  };
+
+  // Search common test locations first to keep this cheap on large repos.
+  for (const sub of ['src', 'packages', 'tests', 'test', '__tests__']) {
+    walk(path.join(root, sub), 0);
+  }
+
+  let best = '.test.ts'; // default for TS projects
+  let bestCount = 0;
+  for (const [ext, n] of counts) {
+    if (n > bestCount) {
+      best = ext;
+      bestCount = n;
+    }
+  }
+  return best;
+}
+
 function findEntryPoints(root: string): string[] {
   const srcRoot = path.join(root, 'src');
   const candidates = KNOWN_ENTRY_POINTS.flatMap(name => [
@@ -113,6 +172,7 @@ function findEntryPoints(root: string): string[] {
 function buildSummary(c: Omit<ProjectConventions, 'summary'>): string {
   const lines: string[] = [];
   lines.push(`- Test framework: ${c.testFramework}` + (c.testFramework === 'vitest' ? ' (import { describe, it, expect } from \'vitest\')' : ''));
+  lines.push(`- Test file extension: ${c.testFileExtension} — generated test files MUST use this extension (the project's gitignore/tooling may reject others)`);
   lines.push(`- Module system: ${c.moduleType.toUpperCase()}`);
   if (c.needsJsSuffix) {
     lines.push('- Import paths MUST include .js suffix (TypeScript with NodeNext moduleResolution)');

@@ -1051,10 +1051,31 @@ export class Orchestrator {
     });
     if (contentFiltered.length === 0) return [];
 
-    const tsTestFiles = contentFiltered.filter(
+    // v1.51 — enforce project's test file extension convention. TesterAgent
+    // sometimes generates .test.js when the project uses .test.ts (or vice
+    // versa). zod's .gitignore rejects .test.js outright; vite's tooling
+    // expects .test.ts. Rewrite the extension to match the convention rather
+    // than discarding the (otherwise valid) test file.
+    const conventions = this.getConventions();
+    const expectedExt = conventions.testFileExtension;
+    const knownExts = ['.test.ts', '.test.tsx', '.test.js', '.test.mjs', '.spec.ts', '.spec.js'];
+    const extensionFixed = contentFiltered.map(f => {
+      const matchedExt = knownExts.find(e => f.path.endsWith(e));
+      if (matchedExt && matchedExt !== expectedExt) {
+        const newPath = f.path.slice(0, -matchedExt.length) + expectedExt;
+        logger.info(
+          { from: f.path, to: newPath, expected: expectedExt },
+          'TesterAgent: rewriting test file extension to project convention',
+        );
+        return { ...f, path: newPath };
+      }
+      return f;
+    });
+
+    const tsTestFiles = extensionFixed.filter(
       f => f.path.endsWith('.ts') || f.path.endsWith('.tsx'),
     );
-    if (tsTestFiles.length === 0) return contentFiltered; // no TS to check — pass through
+    if (tsTestFiles.length === 0) return extensionFixed; // no TS to check — pass through
 
     const backups = new Map<string, string | null>();
     const written: string[] = [];
@@ -1121,7 +1142,7 @@ export class Orchestrator {
             else fs.writeFileSync(abs, original, 'utf8');
           } catch { /* ignore */ }
         }
-        return testFiles.filter(f => !badPaths.has(f.path));
+        return extensionFixed.filter(f => !badPaths.has(f.path));
       }
 
       // TS errors — parse which paths appear in error lines and discard them.
@@ -1152,7 +1173,7 @@ export class Orchestrator {
         }
       }
 
-      return testFiles.filter(f => !badPaths.has(f.path));
+      return extensionFixed.filter(f => !badPaths.has(f.path));
     } catch (err: unknown) {
       // Last-resort catch: tsc itself crashed or an unexpected error. Fall back
       // to no test files rather than blocking the step.
