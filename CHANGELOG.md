@@ -13,6 +13,21 @@
 
 ---
 
+## v1.55 — Structural anchor v3: embed current content in property arrow error (2026-05-16)
+
+`locateReplaceMethod` now embeds the current source lines of the property arrow directly in
+the error message. Previously: "call read_file first, then use replace_in_file" — required an
+extra LLM round-trip and sometimes led to noop. Now: error includes `Current content (lines X–Y):`
+so Coder can immediately write the `replace_in_file` call without reading the file separately.
+
+**L6 spot-check:** L6.2 (query JSDoc, request.ts 489 lines) ✅ confirmed no regression.
+L6.4 (redirect() property arrow, context.ts 780 lines) ❌ unchanged — model noop before even
+reaching replace_method. Root cause: file too large for Gemma's effective engagement at current
+context budget. Fix helps medium-complexity property arrows (<500-line files); 780-line ceiling
+requires 32K aux model. L6 baseline remains **3/4 (75%)**. **589/589 tests.**
+
+---
+
 ## v1.54 — Dirty working tree fix + TesterAgent async rules (2026-05-16)
 
 **A) GitEngine:** `createBranchForTask` now runs `git checkout -f <base>` + `git clean -fd` before
