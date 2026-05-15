@@ -13,6 +13,21 @@
 
 ---
 
+## v1.54 — Dirty working tree fix + TesterAgent async rules (2026-05-16)
+
+**A) GitEngine:** `createBranchForTask` now runs `git checkout -f <base>` + `git clean -fd` before
+forking. `commit_skipped` tasks left modified tracked files and untracked spec files in the working
+tree; subsequent tasks started from dirty state, corrupting baseline fingerprints.
+
+**B) TesterAgent:** Rules 13-14 added: lifecycle hooks using `await` must declare `async`; modules
+under test must use static top-level imports, not dynamic `import()` inside `beforeEach`.
+
+**Bench result (vite cross-repo v3):** 2/6 ✅ — V2 (getViteVersion new file) + V5 (HMR_HEADER_NAME).
+Up from 0/6 baseline. V1/V3 blocked by 16–25K token context ceiling (needs 32K aux model).
+V4 Reviewer correctly caught wrong import (progress vs prior noop). V6 noop unchanged. **589/589 tests.**
+
+---
+
 ## v1.53 — TestRunner unit-script preference (2026-05-16)
 
 **Root cause (vite cross-repo bench):** `npm test` in vite = `test-unit && test-serve && test-build`. E2e tests (test-serve/test-build) require a browser/server and always fail/timeout in our environment. Baseline detection captured no fingerprints → every post-change test failure treated as new → `commit_skipped` even when code was correct (V5: `HMR_HEADER_NAME = 'x-vite-hmr'` was correct but blocked).
