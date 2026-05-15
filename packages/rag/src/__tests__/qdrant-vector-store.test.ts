@@ -93,6 +93,28 @@ describe('QdrantVectorStore (v1.47)', () => {
     expect(mockClient.search).not.toHaveBeenCalled();
   });
 
+  it('passes filePath filter to Qdrant when scope provided', async () => {
+    mockClient.search.mockResolvedValue([
+      { id: 'uuid-1', score: 0.8, payload: { symbolName: 'ServerFunc' } },
+    ]);
+    const store = new QdrantVectorStore('/tmp/v', 'http://localhost:6333', 3);
+    await store.loadFromDisk();
+    (store as unknown as { _size: number })._size = 10;
+    await store.search([1, 0, 0], 5, { filePath: 'packages/server/src' });
+    const searchCall = mockClient.search.mock.calls[0] as [string, { filter?: unknown }];
+    expect(searchCall[1].filter).toBeDefined();
+  });
+
+  it('search without filter sends no Qdrant filter', async () => {
+    mockClient.search.mockResolvedValue([]);
+    const store = new QdrantVectorStore('/tmp/v', 'http://localhost:6333', 3);
+    await store.loadFromDisk();
+    (store as unknown as { _size: number })._size = 5;
+    await store.search([1, 0, 0], 5);
+    const searchCall = mockClient.search.mock.calls[0] as [string, { filter?: unknown }];
+    expect(searchCall[1].filter).toBeUndefined();
+  });
+
   it('save() is a no-op (Qdrant persists automatically)', async () => {
     const store = new QdrantVectorStore('/tmp/v', 'http://localhost:6333', 3);
     await store.save();

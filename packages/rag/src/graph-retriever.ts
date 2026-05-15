@@ -214,6 +214,19 @@ export class GraphRetriever {
     return items.map(item => `// ${item.filePath}:${item.startLine}\n${item.text}`).join('\n\n---\n\n');
   }
 
+  // v1.48 — extract a package-path scope from the query for Qdrant payload
+  // filtering. Returns the first `packages/xxx` segment found so Qdrant can
+  // restrict the search to that package's files. Returns undefined when no
+  // package path is mentioned (single-file or sandbox tasks).
+  // v1.48 — extract package scope from query for Qdrant payload filtering.
+  // Takes at most 3 path segments (packages/name/src or packages/name) so a
+  // filename like `dataLoader.ts` doesn't end up in the filter path.
+  private extractPackageScope(query: string): string | undefined {
+    // Match "packages/<pkg>" or "packages/<pkg>/<subdir>" but stop there.
+    const m = query.match(/\bpackages\/[\w.-]+(?:\/[\w.-]+)?(?=\/|$|\s|[^/\w.-])/);
+    return m ? m[0] : undefined;
+  }
+
   async retrieveContextItems(query: string, k = 5): Promise<ContextItem[]> {
     // v1.42 — monorepo meta is always injected regardless of vector index size.
     // v1.42: return early only when BOTH index is empty AND no meta is available.
@@ -225,6 +238,13 @@ export class GraphRetriever {
     // v1.43: track primary (top-k) symbol names separately from 1-hop deps so
     // the 2-hop caller expansion only queries for primary symbols, not their deps.
     const primarySymbolNames: string[] = [];
+
+    // v1.48 — scope-filtered retrieval for Qdrant backend. When the query names
+    // a specific package path, restrict vector search to files under that path so
+    // cross-package noise doesn't fill the context window. HNSW silently ignores
+    // the filter (global ANN). Falls back to unfiltered when scope is undefined.
+    const scope = this.extractPackageScope(query);
+    const vectorFilter = scope ? { filePath: scope } : undefined;
 
     // Vector + BM25 + reranker retrieval — skipped when index is empty.
     if (this.vectorStore.size > 0) {
@@ -242,7 +262,7 @@ export class GraphRetriever {
         const useBM25 = config.rag.bm25Enabled && this.bm25Index.size > 0;
         const candidateCount = useReranker ? config.rag.rerankerCandidates : k;
 
-        let candidates = await this.vectorStore.search(queryVector, candidateCount);
+        let candidates = await this.vectorStore.search(queryVector, candidateCount, vectorFilter);
 
         if (useBM25) {
           const bm25Results = this.bm25Index.search(query, config.rag.bm25Candidates);
@@ -457,14 +477,15 @@ export class GraphRetriever {
     const startedAt = Date.now();
     let lastTickAt = 0;
 
-    // v1.47 — when the vector store is empty (e.g. fresh Qdrant collection after
-    // a backend switch from HNSW) but file hashes still exist in SQLite, every file
-    // would be skipped and the new index would remain empty. Detect this and force
-    // a full re-index by clearing all stored hashes so they don't match.
-    if (this.store && this.vectorStore.size === 0) {
+    // v1.47 — when using Qdrant (persistent store) and the collection is empty
+    // but file hashes still exist in SQLite (e.g. after a backend switch from HNSW),
+    // every file would be skipped and the new collection would remain empty.
+    // Only applies to Qdrant — for HNSW, size=0 just means the embed backend was
+    // unavailable during a previous run, not that the index should be cleared.
+    if (this.store && this.vectorStore.size === 0 && config.rag.vectorBackend === 'qdrant') {
       const hasHashes = files.some(f => this.store!.getFileHash(f) !== undefined);
       if (hasHashes) {
-        logger.info({ indexId }, 'Vector store empty but file hashes present — forcing full re-index');
+        logger.info({ indexId }, 'Qdrant collection empty but file hashes present — forcing full re-index');
         for (const f of files) {
           try { this.store.saveFileHash(f, ''); } catch { /* ignore */ }
         }
