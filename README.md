@@ -6,7 +6,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="MIT License"/></a>
   <img src="https://img.shields.io/badge/TypeScript-5.4+-3178c6.svg" alt="TypeScript"/>
   <img src="https://img.shields.io/badge/Node.js-18+-339933.svg" alt="Node.js"/>
-  <img src="https://img.shields.io/badge/tests-584%20passed-22c55e.svg" alt="584 tests"/>
+  <img src="https://img.shields.io/badge/tests-589%20passed-22c55e.svg" alt="589 tests"/>
   <img src="https://img.shields.io/badge/packages-12%20clean-22c55e.svg" alt="12 packages"/>
   <img src="https://img.shields.io/badge/sandbox-87.5%25-22c55e.svg" alt="87.5% sandbox"/>
   <img src="https://img.shields.io/badge/real--repo-92%25-22c55e.svg" alt="92% real repos"/>
@@ -55,9 +55,9 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | 4 – 5 new abstractions | 🟡 ~70 % | Reviewer becomes the gating factor |
 | 5 + architectural | 🔴 ~30 % | Context or scope overrun |
 
-### Real-repo progress (v1.38 → v1.50)
+### Real-repo progress (v1.38 → v1.52)
 
-| Metric | v1.38 (2026-05-13) | v1.50 (2026-05-15) | Δ |
+| Metric | v1.38 (2026-05-13) | v1.52 (2026-05-15) | Δ |
 |---|---|---|---|
 | Real-repo success rate | 🟡 **42 %** (5/12) | 🟢 **92 %** (11/12) | **+50 pp** |
 | `ts_fail` (bad workspace imports) | 🔴 29 % | 🟢 0 % | Monorepo meta injection |
@@ -110,6 +110,24 @@ POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer
 | Large class surgery (>700 LOC) | 🟡 ~75 % | Structural anchor v2 (overload-aware) — see L6 bench |
 | Complex generics (tRPC-style) | 🔴 ~20 % | Model capability limit on Gemma 26B |
 | Cumulative chained tasks | 🟢 ~100 % | v1.39-a auto ff-merge; 6/6 on sandbox |
+
+### Cross-repo transferability
+
+System tested on repos outside the hono/trpc training distribution (v1.51–v1.52):
+
+| Repo | Type | Tasks | Result | Notes |
+|------|------|-------|--------|-------|
+| `colinhacks/zod` | validation library | 4 | **4/4 ✅** | After v1.51 extension detection |
+| `vitejs/vite` | bundler monorepo | 6 | 0/6 | Needs `pnpm build` first → `healthcheck` reveals this |
+
+**Pre-flight:** `GET /project/:id/healthcheck` surfaces environment issues (missing node_modules, broken vitest setup) before bench runs. Recommended workflow for new repos:
+```bash
+# 1. Register + index
+curl -X POST /project -d '{"root":"/path/to/repo"}'
+# 2. Healthcheck before bench
+curl /project/<id>/healthcheck
+# 3. Fix reported issues, then submit tasks
+```
 
 ---
 
