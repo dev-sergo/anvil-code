@@ -13,6 +13,12 @@
 
 ---
 
+## Cross-repo bench: vite (2026-05-15)
+
+First non-hono/trpc bench — vite (vitejs/vite, 1413 files, 1598 vectors). 0/6 tasks committed, but failures are infrastructure (vite needs `pnpm install && pnpm build` before tests run; vitest crashes at startup), context (utils.ts 1835 lines exceeds qwen3 16K context for Reviewer/Tester), and one model variance (V1 llm_parse_fail). V5 production code was correct (`HMR_HEADER_NAME` added to constants.ts) but vitest crash blocked commit. Honest finding: cross-repo transferability requires pre-flight check that test pipeline runs cleanly on baseline. Bench: [2026-05-15-cross-repo-vite.md](docs/benchmarks/runs/2026-05-15-cross-repo-vite.md).
+
+---
+
 ## v1.50 — Structural anchor v2: overload disambiguation + property arrow (2026-05-15)
 
 `findMethod` v2: (1) multiple MethodDeclaration overloads → prefer implementation (method with body) over signature-only overloads; use `nearLine` hint to pick among multiple bodies; (2) property arrow function (`name = (...) => {}`) fallback — detected and reported with exact `startLine–endLine` range and prescriptive `replace_in_file` call in the error. `replace_method` tool: optional `nearLine` parameter. FEATURE_SPEC: explicit 3-step workflow for property arrow functions. **L6 bench** (large-file surgery): L6.1 ✅ HonoRequest.header() implementation overload (489 lines, 3 overloads, 290s); L6.2 ✅ query() JSDoc (62s); L6.3 ✅ getter in Hono class (539 lines, 114s); L6.4 ❌ redirect() property arrow with complex generics (780 lines, model limit). **3/4 (75%)** on new large-file task class. +3 unit tests (overload → impl, nearLine, arrow error). 584/584.
