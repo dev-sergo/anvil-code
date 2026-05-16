@@ -13,6 +13,16 @@
 
 ---
 
+## v1.60 — Reviewer leniency + FEATURE_SPEC ESM rule (2026-05-17)
+
+Reviewer: added two DO NOT reject items — compact handler signatures and exact error message wording. Fixes S2 (bug fix) which was rejected for error message case. S1 (health endpoint) still fails: qwen2.5-coder Reviewer ignores the rule and rejects compact Fastify handlers.
+
+FEATURE_SPEC: added MODULE SYSTEM rule for Coder — ESM projects must use import syntax, never require(). V2 (getViteVersion) still fails: qwen2.5-coder Coder ignores the rule and generates require().
+
+**Model tradeoff documented:** qwen2.5-coder as Coder improves complex navigation (V3, V6) but regresses simple sandbox tasks (S1) and ESM compliance (V2). Gemma was reliable on S1/S2 but couldn't navigate large files. No single model excels at both. **588/595 tests (same 3 pre-existing ASTParser).**
+
+---
+
 ## v1.59 — ESM guard + qwen2.5-coder as Coder model (2026-05-17)
 
 `validateAndFilterTestFiles`: ESM guard discards test files using `require()`/`__dirname` in ESM-first projects (`"type":"module"` in package.json). Prevents eslint `no-restricted-globals` commit failures. `LLM_LARGE_MODEL` switched to `qwen2-5-coder-32b-instruct-q4-k-m-ctx-32k`.
