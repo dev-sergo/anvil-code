@@ -13,6 +13,14 @@
 
 ---
 
+## v1.59 — ESM guard + qwen2.5-coder as Coder model (2026-05-17)
+
+`validateAndFilterTestFiles`: ESM guard discards test files using `require()`/`__dirname` in ESM-first projects (`"type":"module"` in package.json). Prevents eslint `no-restricted-globals` commit failures. `LLM_LARGE_MODEL` switched to `qwen2-5-coder-32b-instruct-q4-k-m-ctx-32k`.
+
+**Bench (vite V1-V6, qwen2.5-coder):** V3 ✅ (parseAcceptHeader — was Gemma ceiling), V5 ✅ (ESM guard), V6 ✅ (createServer JSDoc via re-export chain — was Gemma noop). Score: **3/6** (same count, better tasks: V3/V5/V6 vs Gemma's V1/V2/V5). V1 (config.ts 2728 lines) → qwen2.5-coder also noops. **595/595 tests.**
+
+---
+
 ## v1.58 — Pre-commit hook retry + TesterAgent ESM-only rule (2026-05-17)
 
 `commitChanges` now detects when a pre-commit hook reformats staged files (formatter hooks: prettier, oxfmt, etc.) by checking for modified tracked files after a commit failure, then re-stages and retries once. Handles the common lint-staged pattern where the formatter modifies files but leaves them unstaged.

@@ -4,7 +4,7 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.58 done (2026-05-17). Pre-commit hook retry (formatter) + TesterAgent rule 15 (ESM only). Reviewer isolation v1.57 ✅. V2 vite: eslint в pre-commit ловит unused import + require() — код качества, не инфра. L6: 3/4. 595 тестов.
+**Статус:** 🟢 v1.59 done (2026-05-17). Coder: Gemma → qwen2.5-coder-32B. Vite: **3/6** (V3+V5+V6 ✅). V3 (parseAcceptHeader) и V6 (createServer re-export) — были model-ceiling Gemma, теперь ✅. ESM guard фильтрует require() test-файлы в ESM проектах. 595 тестов.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
