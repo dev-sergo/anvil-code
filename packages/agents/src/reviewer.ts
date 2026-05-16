@@ -34,6 +34,8 @@ DO NOT reject for:
 - TypeScript type annotations (checked separately by the build)
 - Missing edge case handling unless explicitly required by the task
 - Incomplete changes across files — other steps may cover the rest
+- Handler/callback parameter names or signatures — a compact handler with no named params is valid if behavior is correct
+- Exact wording of error messages, log strings, or comments (only reject if the logic producing them is wrong)
 
 Keep issues to 1-3 items max. Only list blocking problems.
 Output ONLY valid JSON: { "isApproved": true|false, "issues": ["blocking issue"] }`;

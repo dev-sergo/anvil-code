@@ -58,6 +58,7 @@ CONTENT COMES FROM THE TASK DESCRIPTION — NOT FROM SIBLING CODE. This is the m
 
 Rules:
 - Match the project's conventions: test framework, module type, .js suffix in imports for NodeNext, strict mode, indentation style.
+- MODULE SYSTEM: if the project uses ESM ("type":"module" in package.json, or uses import/export throughout), ALL new code MUST use ESM import syntax — NEVER require() or __dirname. ESM projects ban CommonJS globals and will fail linting.
 - Follow the repo-map provided in context — do NOT reference symbols, files, or methods that aren't listed there (or that you create in this same step).
 - Keep changes minimal. Don't refactor or "improve" code that the step didn't ask about.
 - For new files in TypeScript projects: source files must be .ts (or .tsx), but imports ALWAYS use the .js suffix per NodeNext — even when the source file is .ts. Example: create_file('src/middleware/logger.ts', ...) then in server.ts write: import { logger } from './middleware/logger.js' (NOT './middleware/logger' — the .js is mandatory or tsc will error TS2307).
