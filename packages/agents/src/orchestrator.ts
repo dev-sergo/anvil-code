@@ -1041,10 +1041,27 @@ export class Orchestrator {
     // empty describe causes vitest "No test found in suite" which fails validation.
     // This is a string-level check (TypeScript cannot catch it) done before tsc.
     const hasTestCalls = (content: string) => /\bit\s*\(|\btest\s*\(/.test(content);
+
+    // ESM guard (Rule 15): in ESM-first projects ("type":"module" in package.json),
+    // discard test files that use CommonJS-only globals (require, __dirname, __filename).
+    // These pass tsc (via @types/node) but fail eslint no-restricted-globals at commit.
+    const isEsmProject = (() => {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(this.writer.root, 'package.json'), 'utf8'));
+        return pkg.type === 'module';
+      } catch { return false; }
+    })();
+    const hasCommonJsGlobals = (content: string) =>
+      /\brequire\s*\(|\b__dirname\b|\b__filename\b/.test(content);
+
     const contentFiltered = testFiles.filter(f => {
       const content = f.action === 'create' ? f.content : '';
       if (!hasTestCalls(content)) {
         logger.warn({ path: f.path }, 'TesterAgent: discarding test file with no it()/test() calls');
+        return false;
+      }
+      if (isEsmProject && hasCommonJsGlobals(content)) {
+        logger.warn({ path: f.path }, 'TesterAgent: discarding test file with CommonJS globals (require/__dirname) in ESM project');
         return false;
       }
       return true;
