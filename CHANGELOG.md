@@ -13,6 +13,14 @@
 
 ---
 
+## v1.56 — add_export duplicate guard + done() pre-flight check (2026-05-16)
+
+`locateAddExport` now checks if a top-level symbol with the same name already exists before inserting. `done()` handler scans all modified files for duplicate top-level exports before finalising — catches cases where Coder uses both `add_export` and `replace_in_file` on the same symbol in one step. `WorkingSet.modifiedEntries()` added to support the scan.
+
+**Context:** V3 (parseAcceptHeader in vite's utils.ts, 1835 lines) — Gemma-26B produces duplicate definitions on large files. Guards prevent the corrupted output from reaching Reviewer; Coder gets explicit feedback to correct. V3 remains model-ceiling (Gemma unreliable on 1835-line files). Guards are valuable for smaller files. **591/591 tests.**
+
+---
+
 ## v1.55 — Structural anchor v3: embed current content in property arrow error (2026-05-16)
 
 `locateReplaceMethod` now embeds the current source lines of the property arrow directly in
