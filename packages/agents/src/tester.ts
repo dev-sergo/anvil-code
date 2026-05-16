@@ -82,6 +82,10 @@ Rules:
     is unreliable and causes async complexity.
     CORRECT: import { myFunction } from '../utils/myModule.js'; (top of file)
     WRONG:   beforeEach(async () => { const m = await import('../utils/myModule'); });
+15. ESM ONLY — never use require(): All test files must use ESM import syntax.
+    require() is banned in ESM-first projects (vite, modern Node) and will fail linting.
+    CORRECT: import fs from 'node:fs';  import { readFileSync } from 'node:fs';
+    WRONG:   const fs = require('fs');   const { readFileSync } = require('node:fs');
 
 Output ONLY valid JSON:
 { "testFiles": [{ "path": "src/__tests__/foo.test.ts", "content": "...", "action": "create" }] }`;
