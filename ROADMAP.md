@@ -4,7 +4,7 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.56 done (2026-05-16). add_export duplicate guard + done() pre-flight. Cross-repo vite: **3/6 ✅** (V1+V2+V5). V3 (utils.ts 1835 строк) = model-ceiling Gemma (дубли, нестабильность). L6: 3/4. Sandbox 3/3 ✅. 591 тестов.
+**Статус:** 🟢 v1.56 done (2026-05-16). Sandbox full bench: **6/7 (86%)**. Vite isolated: **3/6** (V1+V2+V5 ✅); vite full-queue: 1/6 (Reviewer non-determinism после 7 sandbox задач). L6: 3/4. 591 тестов. Сессия завершена.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
