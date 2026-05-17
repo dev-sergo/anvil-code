@@ -13,6 +13,23 @@
 
 ---
 
+## v1.61 — Qwen3-35B MoE as default Coder (2026-05-18)
+
+`LLM_LARGE_MODEL` and `LLM_SMALL_MODEL` both switched to `qwen3-32k` (Qwen3-35B-A3B MoE, 32K ctx).
+
+**Why:** Qwen3 MoE has only 3B active parameters per forward pass → **11 tok/s** vs ~5 tok/s for dense 32B models. Thinking mode improves planning quality. 32K context handles large RAG payloads (vite's config.ts 2728 lines, utils.ts 1835 lines).
+
+**Bench results vs previous best (qwen2.5-coder Q6_K_L):**
+- Sandbox: **3/3 ✅** (was 2/3 — S1 Reviewer rejection fixed by thinking mode)
+- Vite V1 JSDoc defineConfig (config.ts 2728 lines): ✅ (was ❌ model ceiling for all dense models)
+- Vite V6 createServer JSDoc (re-export chain): ✅ (was ❌ noop for Gemma)
+- Vite V3 parseAcceptHeader (utils.ts modification): ❌ test fail (same hard case as before)
+- Speed: **2× faster** than any dense 32B variant
+
+**Note:** Both LARGE and SMALL on qwen3-32k — Planner needs 32K to fit large vite RAG context (25K tokens).
+
+---
+
 ## v1.60 — Reviewer leniency + FEATURE_SPEC ESM rule (2026-05-17)
 
 Reviewer: added two DO NOT reject items — compact handler signatures and exact error message wording. Fixes S2 (bug fix) which was rejected for error message case. S1 (health endpoint) still fails: qwen2.5-coder Reviewer ignores the rule and rejects compact Fastify handlers.
