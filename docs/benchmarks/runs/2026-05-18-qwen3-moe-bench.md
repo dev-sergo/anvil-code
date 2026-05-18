@@ -30,11 +30,19 @@
 | Task | Result | Note |
 |------|--------|------|
 | V1 — JSDoc on defineConfig (config.ts 2728 lines) | ✅ | **New!** Was model-ceiling for all dense models |
+| V2 — getViteVersion new file | ✅ **committed `2b240b42`** | **v1.62 ESM guard fired** — retry produced `fileURLToPath(import.meta.url)` |
 | V3 — parseAcceptHeader (utils.ts 1835 lines, modify) | ❌ commit_skipped | Test fail (server-hmr.spec.ts) — hard case for all models |
 | V5 — HMR_HEADER_NAME constant | ✅ | Consistent |
 | V6 — createServer JSDoc (re-export chain) | ✅ | Was Gemma noop, now ✅ |
 
-V2 (getViteVersion new file): ❌ eslint `require()` in production ESM code — Qwen3 generates CJS despite ESM rule.
+**Vite total: 4/5 ✅** (V1+V2+V5+V6; V3 remains hard case).
+
+### V2 post-v1.62 detail
+
+Two `coder_file_ready` events (415 bytes → 431 bytes) in SSE stream confirm ESM guard fired:
+- Attempt 1: Coder generated `__dirname` without ESM preamble → `detectEsmProductionViolators()` caught it
+- Retry: nudge listing `getViteVersion.ts` + correct `import` example → Coder produced ESM-compliant code
+- Committed diff: `fileURLToPath(import.meta.url)` + `dirname()` pattern — idiomatic ESM `__dirname` replacement
 
 ## Speed benchmark (warm, 300 tokens)
 
@@ -56,4 +64,4 @@ Qwen3 generates reasoning tokens before producing output. For multi-file tasks l
 ## Remaining blockers
 
 1. **V3 (utils.ts 1835 lines modification)**: All models fail or produce test regressions when inserting code into this large file. Architectural issue — needs safer insertion strategy.
-2. **V2 (ESM compliance in production code)**: Qwen3 generates `require()` despite ESM rule. ESM guard filters test files; production file validation not yet implemented.
+2. ~~**V2 (ESM compliance)**: Fixed in v1.62 — `detectEsmProductionViolators` + retry nudge.~~ ✅
