@@ -4,7 +4,7 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.63 done (2026-05-18). `read_file` offset (`start_line`) + large-file nudge → V3 (utils.ts 1835 строк) наконец проходит. **Vite bench: 5/5 ✅ (V1+V2+V3+V5+V6)** — все задачи проходят с Qwen3 MoE.
+**Статус:** 🟢 v1.63 done (2026-05-18). `read_file` offset (`start_line`) + large-file nudge → V3 (utils.ts 1835 строк) наконец проходит. **Vite bench: 5/5 ✅ (V1+V2+V3+V5+V6)**. Sandbox regression: **6–7/7** (нет регрессии, L3.1 model variance ~50-70% per run).
 **Hardware bench (2026-05-18):** Q6K_L 32B sweet spot найден — `ngl=56, q4_0 KV, 16K ctx` → **6.28 tok/s** (+15.6% vs baseline 5.37). `--flash-attn` / `--mlock` не влияют на OOM порог.
 **Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
 **TESTER_ENABLED:** true.
