@@ -5,6 +5,14 @@
 
 ---
 
+## v1.62 — ESM production guard in Orchestrator (2026-05-18)
+
+**Root cause (V2 vite bench):** Qwen3 generates `require()` in production ESM files (e.g. `getViteVersion.ts`). The existing ESM guard in `validateAndFilterTestFiles` only filtered test files; production code passed through untouched.
+
+**Fix:** After the noop-retry check in `executeStep()`, `detectEsmProductionViolators()` scans all production `FileChange` entries for `require()`/`__dirname`/`__filename` patterns (both `create` content and `modify` replace-texts). In ESM projects (`"type":"module"` in `package.json`), any violation triggers one retry with an explicit nudge: lists the offending files and shows the correct `import` syntax. Cap at 1 retry — residual violations fall through to the validation loop and Fixer. `getIsEsmProject()` is cached per-task and reused in `validateAndFilterTestFiles` (de-duplicates the inline calculation). **7 new unit tests. 605/609 total (4 pre-existing unchanged).**
+
+---
+
 ## hardware-bench — Q6K_L ngl sweep on RTX 3090 (2026-05-18)
 
 Hardware-only experiment: find the fastest llama-swap config for Qwen2.5-Coder-32B-Instruct-Q6_K_L within 24 GB VRAM.
