@@ -5,6 +5,18 @@
 
 ---
 
+## trpc bench session — Qwen3-35B MoE (2026-05-19)
+
+**Result:** trpc **2/6 (33%)**. T1✅ (JSDoc, 20 lines) T4✅ (createTimeout, 5 lines). T2❌ ts_fail (bad import path) T3❌ vitest crash (Qwen3 over-refactored StandaloneHandlerOptions types) T5❌ test_fail (hardcoded limit, broke existing maxBodySize option) T6❌ noop (900-line dataLoader, model decided no changes needed).
+
+**Key finding:** trpc `packages/openapi` has a vitest globalSetup that regenerates hey-api clients whenever `server/src/**` changes. Old cache (Gemma run) caused hash mismatch → codegen broke client imports. Fix: `cd packages/openapi && pnpm codegen` before bench (7s). Added to memory and bench run notes.
+
+**Gemma peak (v1.43) remains 5/6 on trpc.** Qwen3 thinking mode causes T3 over-refactoring; T6 noop persists (read_file start_line helps navigation, not "should I edit" decisions).
+
+Run file: [2026-05-19-trpc-qwen3-moe.md](docs/benchmarks/runs/2026-05-19-trpc-qwen3-moe.md)
+
+---
+
 ## v1.63 — read_file start_line offset + large-file add_export nudge (2026-05-18)
 
 **Root cause (V3 vite bench):** utils.ts is 1835 lines; `read_file` showed only lines 1-350. The truncation message said "use replace_in_file with known line numbers" → Qwen3 guessed coords 1830-1836 and deleted `getFileStartIndex`. qwen2.5-coder had used `add_export` (correct); Qwen3 did not.

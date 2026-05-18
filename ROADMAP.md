@@ -4,14 +4,15 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.63 done (2026-05-18). `read_file` offset (`start_line`) + large-file nudge. **Vite bench: 6/6 ✅ (V1–V6 все)** — первый полный результат. Sandbox: **6–7/7** (нет регрессии). 606/609 тестов.
+**Статус:** 🟢 v1.63 done (2026-05-18). `read_file` offset (`start_line`) + large-file nudge. **Vite bench: 6/6 ✅ (V1–V6 все)** — первый полный результат. Sandbox: **6–7/7** (нет регрессии). 602/605 тестов.
+**trpc bench (2026-05-19):** Qwen3-35B MoE → **2/6 (33%)**. T1✅ T4✅. T2❌(ts_fail) T3❌(vitest crash, Qwen3 over-refactored types) T5❌(test_fail) T6❌(noop 900-line file). Gemma peak на trpc остаётся 5/6 (v1.43). Обнаружена openapi codegen cache issue — fix: `pnpm codegen` перед bench.
 **Hardware bench (2026-05-18):** Q6K_L 32B sweet spot найден — `ngl=56, q4_0 KV, 16K ctx` → **6.28 tok/s** (+15.6% vs baseline 5.37). `--flash-attn` / `--mlock` не влияют на OOM порог.
-**Coder model:** `gemma-4-26b-a4b-it-mxfp4-moe-ctx-32k` (`LLM_LARGE_MODEL=gemma`).
+**Active model:** Qwen3-35B MoE (`LLM_LARGE_MODEL=qwen3-32k`, 11 tok/s, thinking mode, 32K ctx).
 **TESTER_ENABLED:** true.
 **RAG_MAX_CONTEXT_TOKENS:** 1500 рекомендованный default (раньше 3000) — context-budget фикс v1.38.
 **Backend:** llama-swap (local endpoint, see `.env`), tool-calling Coder/Fixer дефолт.
-**Тесты:** 589/589 unit-tests (+ 3 pre-existing ASTParser native failures), 12/12 пакетов чисто.
-**Последнее обновление:** 2026-05-18.
+**Тесты:** 602/605 unit-tests (+ 3 pre-existing ASTParser native failures), 12/12 пакетов чисто.
+**Последнее обновление:** 2026-05-19.
 
 ---
 
