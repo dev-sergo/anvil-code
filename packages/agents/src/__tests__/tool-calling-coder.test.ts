@@ -88,6 +88,45 @@ describe('dispatchToolCall', () => {
     expect(r.text).toMatch(/error: file does not exist/);
   });
 
+  it('read_file with start_line shows the correct window (v1.63)', () => {
+    const content = Array.from({ length: 10 }, (_, i) => `line${i + 1}`).join('\n');
+    write('src/big.ts', content);
+    const r = dispatchToolCall(
+      { function: { name: 'read_file', arguments: { path: 'src/big.ts', start_line: 5 } } },
+      ws,
+    );
+    expect(r.done).toBe(false);
+    expect(r.text).toContain('   5 | line5');
+    expect(r.text).toContain('  10 | line10');
+    expect(r.text).not.toContain('   1 | line1');
+  });
+
+  it('read_file truncation message contains add_export hint and exact start_line (v1.63)', () => {
+    // Create a file with more lines than MAX_READ_LINES (350)
+    const lines = Array.from({ length: 400 }, (_, i) => `export const x${i} = ${i};`);
+    write('src/large.ts', lines.join('\n'));
+    const r = dispatchToolCall(
+      { function: { name: 'read_file', arguments: { path: 'src/large.ts' } } },
+      ws,
+    );
+    expect(r.text).toContain('add_export');
+    expect(r.text).toMatch(/start_line=\d+/);
+    // Should NOT contain the old incorrect advice
+    expect(r.text).not.toContain('Use replace_in_file with known line numbers for lower sections');
+  });
+
+  it('read_file with start_line at file end shows no truncation suffix', () => {
+    const content = Array.from({ length: 5 }, (_, i) => `line${i + 1}`).join('\n');
+    write('src/small.ts', content);
+    const r = dispatchToolCall(
+      { function: { name: 'read_file', arguments: { path: 'src/small.ts', start_line: 3 } } },
+      ws,
+    );
+    expect(r.text).toContain('   3 | line3');
+    expect(r.text).toContain('   5 | line5');
+    expect(r.text).not.toContain('[Showing lines');
+  });
+
   it('replace_in_file updates the working set; subsequent read_file shows new content', () => {
     write('src/a.ts', 'one\ntwo\nthree\n');
     const r1 = dispatchToolCall(

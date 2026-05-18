@@ -183,11 +183,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: 'read_file',
       description:
-        "Read a file's contents from the project. Returns the file as text with line numbers prepended in the format 'NNNN | <line>'. Use this to inspect the exact bytes of a file before deciding what to change. Path is project-relative (e.g. 'src/server.ts').",
+        "Read a file's contents from the project. Returns the file as text with line numbers prepended in the format 'NNNN | <line>'. Use this to inspect the exact bytes of a file before deciding what to change. Path is project-relative (e.g. 'src/server.ts'). For files longer than 350 lines, pass start_line to read a specific section (e.g. start_line=1500 to see the end of a 1836-line file).",
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: 'Project-relative file path' },
+          start_line: { type: 'integer', description: 'Optional 1-based line to start reading from. Defaults to 1. Use to navigate large files: e.g. start_line=1500 on a 1836-line file shows lines 1500-1836.' },
         },
         required: ['path'],
       },
@@ -616,15 +617,26 @@ export function dispatchToolCall(
       if (content === null) return { text: `error: file does not exist: ${filePath}`, done: false };
       // Number lines for the model — makes replace_in_file coords unambiguous.
       const lines = content.split('\n');
-      const truncated = lines.length > MAX_READ_LINES;
-      const shown = truncated ? lines.slice(0, MAX_READ_LINES) : lines;
-      const numbered = shown
-        .map((line, i) => `${String(i + 1).padStart(4, ' ')} | ${line}`)
+      const totalLines = lines.length;
+      // Optional offset: model can request a specific section of large files.
+      const rawStart = args.start_line != null ? Number(args.start_line) : 1;
+      const startIdx = Math.max(0, Math.min(Math.floor(rawStart) - 1, totalLines - 1));
+      const windowLines = lines.slice(startIdx, startIdx + MAX_READ_LINES);
+      const truncated = startIdx + windowLines.length < totalLines;
+      const numbered = windowLines
+        .map((line, i) => `${String(startIdx + i + 1).padStart(4, ' ')} | ${line}`)
         .join('\n');
-      const suffix = truncated
-        ? `\n[Truncated: showing lines 1-${MAX_READ_LINES} of ${lines.length}. Use replace_in_file with known line numbers for lower sections, or read a specific range via replace_in_file coordinates.]`
-        : '';
-      return { text: `# ${filePath} (${lines.length} lines)\n${numbered}${suffix}`, done: false };
+      let suffix = '';
+      if (truncated) {
+        const shownEnd = startIdx + windowLines.length;
+        const remaining = totalLines - shownEnd;
+        suffix =
+          `\n[Showing lines ${startIdx + 1}–${shownEnd} of ${totalLines} (${remaining} more). ` +
+          `To see the end, call read_file with start_line=${Math.max(1, totalLines - MAX_READ_LINES + 1)}. ` +
+          `To ADD a new export at the end of this file without seeing it: use add_export(file, source) — ` +
+          `it inserts after the last existing export automatically and cannot corrupt existing code.]`;
+      }
+      return { text: `# ${filePath} (${totalLines} lines)\n${numbered}${suffix}`, done: false };
     }
     case 'replace_in_file': {
       const filePath = String(args.path ?? '');

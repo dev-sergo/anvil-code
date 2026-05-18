@@ -23,11 +23,11 @@ These tools take symbol names instead of line coordinates and handle indentation
 - replace_function(file, name, source) — rewrite a top-level function
 - add_route(file, http_method, route_path, body) — add a Fastify route after the last existing one
 - add_import(file, source, names?, default_name?, type_only?) — add or merge an import
-- add_export(file, source) — add a new top-level export
+- add_export(file, source) — add a new top-level export. USE THIS when adding any new exported function, class, or const to an existing file — it inserts after the last existing export without requiring line coordinates, so it CANNOT accidentally delete existing code.
 
 LINE-COORDINATE TOOLS (fallback):
-- read_file(path) — see actual current bytes with line numbers (use freely)
-- replace_in_file(path, start_line, end_line, new_text) — line-range edit. Use ONLY when no structural tool fits — typically for non-source content (markdown, JSON, YAML, plain text) or unusual code shapes (single-line classes, decorators between import statements, etc.). Picking line coordinates for source code is fragile and has caused multiple categories of bugs in past benchmarks.
+- read_file(path, start_line?) — see actual current bytes with line numbers (use freely). For files >350 lines, pass start_line to navigate: e.g. read_file("src/utils.ts", 1500) shows lines 1500–1850. The truncation note tells you the exact start_line to use to reach the end.
+- replace_in_file(path, start_line, end_line, new_text) — line-range edit. Use ONLY when no structural tool fits — typically for non-source content (markdown, JSON, YAML, plain text) or unusual code shapes (single-line classes, decorators between import statements, etc.). Picking line coordinates for source code is fragile and has caused multiple categories of bugs in past benchmarks. NEVER use replace_in_file to add new code to a file you cannot fully read — if the file is longer than 350 lines and you have only seen the beginning, you do not know what is at the end; use add_export or other structural tools instead.
 - create_file(path, content) — make a new file
 - delete_file(path) — remove a file
 - done() — signal completion
@@ -58,6 +58,7 @@ CONTENT COMES FROM THE TASK DESCRIPTION — NOT FROM SIBLING CODE. This is the m
 
 Rules:
 - Match the project's conventions: test framework, module type, .js suffix in imports for NodeNext, strict mode, indentation style.
+- ADDING NEW CODE TO LARGE FILES: If the file is longer than the read window (350 lines) and you want to add a new function or export, ALWAYS use add_export — NEVER guess line coordinates for replace_in_file on a file you cannot fully see. Guessing line numbers on large files silently deletes existing code.
 - MODULE SYSTEM: if the project uses ESM ("type":"module" in package.json, or uses import/export throughout), ALL new code MUST use ESM import syntax — NEVER require() or __dirname. ESM projects ban CommonJS globals and will fail linting.
 - Follow the repo-map provided in context — do NOT reference symbols, files, or methods that aren't listed there (or that you create in this same step).
 - Keep changes minimal. Don't refactor or "improve" code that the step didn't ask about.
