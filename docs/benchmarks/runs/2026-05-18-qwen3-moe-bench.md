@@ -31,11 +31,11 @@
 |------|--------|------|
 | V1 — JSDoc on defineConfig (config.ts 2728 lines) | ✅ | **New!** Was model-ceiling for all dense models |
 | V2 — getViteVersion new file | ✅ **committed `2b240b42`** | **v1.62 ESM guard fired** — retry produced `fileURLToPath(import.meta.url)` |
-| V3 — parseAcceptHeader (utils.ts 1835 lines, modify) | ❌ commit_skipped | Test fail (server-hmr.spec.ts) — hard case for all models |
+| V3 — parseAcceptHeader (utils.ts 1835 lines, modify) | ✅ **committed `386eb921`** | **v1.63 read_file offset** — Qwen3 navigated to line 1800, used add_export, 29 lines added 0 deleted |
 | V5 — HMR_HEADER_NAME constant | ✅ | Consistent |
 | V6 — createServer JSDoc (re-export chain) | ✅ | Was Gemma noop, now ✅ |
 
-**Vite total: 4/5 ✅** (V1+V2+V5+V6; V3 remains hard case).
+**Vite total: 5/5 ✅** (V1+V2+V3+V5+V6 — all pass with Qwen3 MoE + v1.63).
 
 ### V2 post-v1.62 detail
 
@@ -63,5 +63,7 @@ Qwen3 generates reasoning tokens before producing output. For multi-file tasks l
 
 ## Remaining blockers
 
-1. **V3 (utils.ts 1835 lines modification)**: All models fail or produce test regressions when inserting code into this large file. Architectural issue — needs safer insertion strategy.
-2. ~~**V2 (ESM compliance)**: Fixed in v1.62 — `detectEsmProductionViolators` + retry nudge.~~ ✅
+~~1. **V3 (utils.ts 1835 lines)**: Fixed in v1.63 — `read_file` offset + truncation nudge guides model to use `add_export`.~~ ✅
+~~2. **V2 (ESM compliance)**: Fixed in v1.62 — `detectEsmProductionViolators` + retry nudge.~~ ✅
+
+**No remaining blockers. Vite 5/5.**

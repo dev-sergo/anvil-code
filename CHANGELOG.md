@@ -5,6 +5,16 @@
 
 ---
 
+## v1.63 — read_file start_line offset + large-file add_export nudge (2026-05-18)
+
+**Root cause (V3 vite bench):** utils.ts is 1835 lines; `read_file` showed only lines 1-350. The truncation message said "use replace_in_file with known line numbers" → Qwen3 guessed coords 1830-1836 and deleted `getFileStartIndex`. qwen2.5-coder had used `add_export` (correct); Qwen3 did not.
+
+**Fix:** `read_file` now accepts optional `start_line` parameter (1-based offset). For a 1836-line file, `read_file("utils.ts", 1486)` shows lines 1486–1836. Truncation message rewritten: shows the exact `start_line` to reach the end and prominently suggests `add_export` as the zero-coord alternative. FEATURE_SPEC updated accordingly. 4 new unit tests.
+
+**Result:** Qwen3 read lines 1-350 first, saw the truncation hint with `start_line=1800`, navigated to the end, used `add_export` → 29 lines added, 0 deleted, `getFileStartIndex` preserved, tests pass. **Vite V3 committed `386eb921`**. Vite bench: **5/5 ✅**.
+
+---
+
 ## v1.62 — ESM production guard in Orchestrator (2026-05-18)
 
 **Root cause (V2 vite bench):** Qwen3 generates `require()` in production ESM files (e.g. `getViteVersion.ts`). The existing ESM guard in `validateAndFilterTestFiles` only filtered test files; production code passed through untouched.
