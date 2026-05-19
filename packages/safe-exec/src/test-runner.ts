@@ -14,7 +14,7 @@ export interface ValidationResult {
 export class TestRunner {
   constructor(
     private projectRoot: string,
-    private timeoutMs: number = 60_000,
+    private timeoutMs: number = 120_000,
   ) {}
 
   // v1.44 — run vitest on specific test files only. Used by validateAndFilterTestFiles
