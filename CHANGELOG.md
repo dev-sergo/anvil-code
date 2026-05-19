@@ -679,3 +679,10 @@ Zod validation of all agent output (protection against malformed LLM JSON). Vect
 **Iter 2:** RAG Engine — ASTParser (TS Compiler API: function/class/interface/type), CodeGraph with persistence; VectorStore (HNSW, cosine, labelMap); GraphRetriever (embed → search → 1-hop deps → token-bounded context); connected to Orchestrator.
 
 **Iter 3:** MCP server — stdio transport, 7 tools (index_codebase, search_code, get_related_code, run_task, get_task_status, list_decisions, add_decision).
+
+---
+
+## Sandbox regression (2026-05-20)
+
+New sandbox (907dbae, Fastify v5 rebuild) — spot check with Qwen3-35B MoE:
+L1.1 ✅ (smoke test from session), L1.2 ✅ (Zod validation, 15s!), L1.3 ✅ (accountAge, 45s), L3.1 ✅ (class refactor, 15s first try). **3/3 ✅ in <2 min total.** Sandbox restored and fully functional.
