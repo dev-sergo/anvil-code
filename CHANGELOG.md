@@ -5,6 +5,18 @@
 
 ---
 
+## v1.65d — add_type_member intersection support + T3 attempt + sandbox restored (2026-05-19 → 2026-05-20)
+
+**add_type_member** now handles `type X = A & { ... }` (intersection with object literal — common pattern for adapter options like `StandaloneHandlerOptions`). Member is inserted in the rightmost object literal.
+
+**FEATURE_SPEC** updated: explicit "ADD OPTION TO EXISTING TYPE" rule — locate type, add ONE optional member via add_type_member, and ALSO wire runtime if task describes behavior.
+
+**T3 persistent failure**: 3 attempts after the v1.65d fix, all rejected by Reviewer. Qwen3 thinking mode continues to over-refactor `StandaloneHandlerOptions` despite explicit prompt guidance. Documented as model-variance limitation.
+
+**Sandbox restored**: `/Users/admin/Documents/work/rag-system-sandbox` was accidentally deleted during session cleanup. Recreated with same structure (types.ts, services/user-service.ts, routes/users.ts, server.ts, test) + fastify v5 + zod v3 + vitest v2 ESM. New initial commit `907dbae` (was `24ce9fa`). Healthcheck: ready=true, tscOk=true, testsOk=true. Re-indexed via API.
+
+---
+
 ## trpc bench v1.65c — 5/6 (83%) new Qwen3 record (2026-05-19)
 
 T1✅ T2✅ T3❌ T4✅ T5✅ T6✅. **Equals Gemma v1.43 peak.** T2 first Qwen3 commit ever (repo memory helped import path). T6 first commit via add_type_member. T3 persistent reviewer_reject (Qwen3 over-refactors standalone types). Root cause of previous failures: TestRunner 60s timeout killed tests at 61s (54s + 7s codegen).
