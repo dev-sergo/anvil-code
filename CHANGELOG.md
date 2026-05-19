@@ -5,6 +5,12 @@
 
 ---
 
+## Cumulative bench Qwen3 MoE — 5/5 (100%) (2026-05-20)
+
+Sequential tasks on new sandbox (907dbae): L1.1→L1.2→L2.1→L3.1→L2.3 — все 5 ✅, каждый мержится в `auto/cumulative`. Финальное состояние: /health + Zod validation + request-logging + class refactor + soft-delete. **Равно Gemma record.** Qwen3 MoE стабилен на накоплении state.
+
+---
+
 ## v1.65d — add_type_member intersection support + T3 attempt + sandbox restored (2026-05-19 → 2026-05-20)
 
 **add_type_member** now handles `type X = A & { ... }` (intersection with object literal — common pattern for adapter options like `StandaloneHandlerOptions`). Member is inserted in the rightmost object literal.
