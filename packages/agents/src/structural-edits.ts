@@ -847,9 +847,25 @@ export function locateAddTypeMember(
         closingBraceParent = stmt.type;
         break;
       }
+      // v1.65d — intersection types (A & { ... }). Find the rightmost
+      // TypeLiteral in the intersection and add the member there.
+      // Common in adapter/option types: `type Opts<T> = Base<T> & { extra: ... }`
+      if (ts.isIntersectionTypeNode(stmt.type)) {
+        const literals = stmt.type.types.filter(ts.isTypeLiteralNode);
+        if (literals.length > 0) {
+          const target = literals[literals.length - 1];
+          membersNode = target.members;
+          closingBraceParent = target;
+          break;
+        }
+        return {
+          ok: false,
+          error: `type alias '${typeName}' is an intersection but has no inline object literal to extend — use replace_in_file`,
+        };
+      }
       return {
         ok: false,
-        error: `type alias '${typeName}' exists but is not an object type literal — use replace_in_file`,
+        error: `type alias '${typeName}' exists but is not an object type literal or intersection — use replace_in_file`,
       };
     }
   }

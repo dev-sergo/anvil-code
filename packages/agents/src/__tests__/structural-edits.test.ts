@@ -765,4 +765,28 @@ describe('locateAddTypeMember', () => {
     const r = locateAddTypeMember(content, 'Foo', 'x: string');
     expect(r.ok).toBe(false);
   });
+
+  it('v1.65d — handles intersection type with inline object literal', () => {
+    const content = `type Opts<T> = Base<T> & {\n  basePath?: string;\n};\n`;
+    const r = locateAddTypeMember(content, 'Opts', 'onError?: (err: Error) => void');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.edit.kind).toBe('insert');
+    if (r.edit.kind !== 'insert') return;
+    expect(r.edit.text).toContain('onError?: (err: Error) => void;');
+  });
+
+  it('v1.65d — picks rightmost object literal in chained intersection', () => {
+    const content = `type Opts = A & B & {\n  basePath?: string;\n};\n`;
+    const r = locateAddTypeMember(content, 'Opts', 'retry?: number');
+    expect(r.ok).toBe(true);
+  });
+
+  it('v1.65d — errors on intersection with no inline object literal', () => {
+    const content = `type Opts = A & B;\n`;
+    const r = locateAddTypeMember(content, 'Opts', 'x: number');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('no inline object literal');
+  });
 });

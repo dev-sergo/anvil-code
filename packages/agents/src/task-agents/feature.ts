@@ -24,6 +24,7 @@ These tools take symbol names instead of line coordinates and handle indentation
 - add_route(file, http_method, route_path, body) — add a Fastify route after the last existing one
 - add_import(file, source, names?, default_name?, type_only?) — add or merge an import
 - add_export(file, source) — add a new top-level export. USE THIS when adding any new exported function, class, or const to an existing file — it inserts after the last existing export without requiring line coordinates, so it CANNOT accidentally delete existing code.
+- add_type_member(file, type_name, member) — add ONE new member (e.g. \`retry?: number\`, \`onError?: (err: Error) => void\`) to an existing interface or type alias. USE THIS for "add X option/property/field to existing Y" tasks — preserves existing generic parameters, existing members, and the type's structure. Works on \`interface X { ... }\`, \`type X = { ... }\`, and \`type X = A & { ... }\` (intersection — member goes in the rightmost object literal).
 
 LINE-COORDINATE TOOLS (fallback):
 - read_file(path, start_line?) — see actual current bytes with line numbers (use freely). For files >350 lines, pass start_line to navigate: e.g. read_file("src/utils.ts", 1500) shows lines 1500–1850. The truncation note tells you the exact start_line to use to reach the end.
@@ -62,6 +63,7 @@ Rules:
 - MODULE SYSTEM: if the project uses ESM ("type":"module" in package.json, or uses import/export throughout), ALL new code MUST use ESM import syntax — NEVER require() or __dirname. ESM projects ban CommonJS globals and will fail linting.
 - Follow the repo-map provided in context — do NOT reference symbols, files, or methods that aren't listed there (or that you create in this same step).
 - Keep changes minimal. Don't refactor or "improve" code that the step didn't ask about.
+- "ADD OPTION/PROPERTY TO EXISTING TYPE" tasks: locate the existing type/interface by name, add ONE new optional member, and STOP. Do NOT change the type's generic parameters (e.g. \`<TRouter, TRequest, TResponse>\` stays as is), do NOT split the type, do NOT replace the parent type with a different base, do NOT add unrelated imports. Prefer \`add_type_member\` — it does the minimal change automatically. The Reviewer will block any change that alters the public type signature beyond the new optional member.
 - For new files in TypeScript projects: source files must be .ts (or .tsx), but imports ALWAYS use the .js suffix per NodeNext — even when the source file is .ts. Example: create_file('src/middleware/logger.ts', ...) then in server.ts write: import { logger } from './middleware/logger.js' (NOT './middleware/logger' — the .js is mandatory or tsc will error TS2307).
 - NEVER write placeholder comments like "// Existing code…" or "// TODO". Either include the real code or omit the line.
 - For Fastify: hooks take (request, reply) only — no payload/done/next. Use reply.elapsedTime for request duration. Use app.addHook("onResponse", ...) for response logging (not onRequest).
