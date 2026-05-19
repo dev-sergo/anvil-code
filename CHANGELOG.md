@@ -5,6 +5,12 @@
 
 ---
 
+## v1.65c — TestRunner timeout 60s → 120s (2026-05-19)
+
+trpc test suite takes 54s clean + 7s openapi codegen = 61s → SIGKILL after 60s → all tasks commit_skipped. Fixed by doubling timeout. **Confirmed T5 ✅ (maxBodySize, uses opts.maxBodySize correctly) and T6 ✅ (dataLoader retry, new file with DataLoaderOptions.retry) in trpc bench.** T1-T4 expected to pass in next full run.
+
+---
+
 ## v1.65b — add_type_member: AST-anchored interface/type member insertion (2026-05-19)
 
 New structural tool for tool-calling Coder: `add_type_member(file, type_name, member)`. Uses TypeScript Compiler API to locate an `interface` or type-alias object literal by name, finds the closing `}` line, inserts the member with correct indent. No line-number guessing — model names the type, runtime does the navigation.
