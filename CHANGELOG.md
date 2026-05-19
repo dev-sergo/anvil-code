@@ -5,6 +5,14 @@
 
 ---
 
+## trpc bench v1.65c — 5/6 (83%) new Qwen3 record (2026-05-19)
+
+T1✅ T2✅ T3❌ T4✅ T5✅ T6✅. **Equals Gemma v1.43 peak.** T2 first Qwen3 commit ever (repo memory helped import path). T6 first commit via add_type_member. T3 persistent reviewer_reject (Qwen3 over-refactors standalone types). Root cause of previous failures: TestRunner 60s timeout killed tests at 61s (54s + 7s codegen).
+
+Run file: [2026-05-19-trpc-v1.65c-full.md](docs/benchmarks/runs/2026-05-19-trpc-v1.65c-full.md)
+
+---
+
 ## v1.65c — TestRunner timeout 60s → 120s (2026-05-19)
 
 trpc test suite takes 54s clean + 7s openapi codegen = 61s → SIGKILL after 60s → all tasks commit_skipped. Fixed by doubling timeout. **Confirmed T5 ✅ (maxBodySize, uses opts.maxBodySize correctly) and T6 ✅ (dataLoader retry, new file with DataLoaderOptions.retry) in trpc bench.** T1-T4 expected to pass in next full run.

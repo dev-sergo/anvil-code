@@ -4,7 +4,7 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → Cline / Roo Code без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-**Статус:** 🟢 v1.65b done (2026-05-19). `add_type_member` — AST-инструмент для добавления членов в interface/type alias. Прямой fix для T6 noop (DataLoaderOptions 900-строчный файл). Плюс v1.65a Reviewer leniency, v1.64 Repo memory.
+**Статус:** 🟢 v1.65c done (2026-05-19). **trpc bench: 5/6 (83%) ✅ — новый рекорд Qwen3, равно Gemma v1.43 peak.** T1✅ T2✅(впервые) T3❌ T4✅ T5✅ T6✅(add_type_member). Ключевой фикс: TestRunner 60s→120s. `add_type_member` — AST-инструмент для добавления членов в interface/type alias. Прямой fix для T6 noop (DataLoaderOptions 900-строчный файл). Плюс v1.65a Reviewer leniency, v1.64 Repo memory.
 **Статус:** v1.64 done (2026-05-19). Repo memory: `repo_patterns` таблица в memory.db. После Fixer fix сохраняет ошибку; следующий Planner/Coder видит в контексте. Ожидаемый эффект: trpc T2 (TS2307 repeat import) должен пройти со 2го запуска. `read_file` offset (`start_line`) + large-file nudge. **Vite bench: 6/6 ✅ (V1–V6 все)** — первый полный результат. Sandbox: **6–7/7** (нет регрессии). 602/605 тестов.
 **trpc bench (2026-05-19):** Qwen3-35B MoE → **2/6 (33%)**. T1✅ T4✅. T2❌(ts_fail) T3❌(vitest crash, Qwen3 over-refactored types) T5❌(test_fail) T6❌(noop 900-line file). Gemma peak на trpc остаётся 5/6 (v1.43). Обнаружена openapi codegen cache issue — fix: `pnpm codegen` перед bench.
 **Hardware bench (2026-05-18):** Q6K_L 32B sweet spot найден — `ngl=56, q4_0 KV, 16K ctx` → **6.28 tok/s** (+15.6% vs baseline 5.37). `--flash-attn` / `--mlock` не влияют на OOM порог.
