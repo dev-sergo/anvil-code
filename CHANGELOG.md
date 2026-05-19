@@ -5,6 +5,12 @@
 
 ---
 
+## v1.65a — Reviewer leniency for refactor steps (2026-05-19)
+
+Added REFACTOR STEPS paragraph to Reviewer prompt: structural changes (object→class, arrow→regular fn, property→static method) are not blocking if public API is preserved. Tightened REJECT criterion from "existing code deleted" to "whole operation completely absent". **L3.1 result: 1/3** in sample run — statistically inconclusive vs. pre-fix 50-70%. Root cause confirmed: Coder sometimes generates class without `static` keyword (Reviewer correctly rejects). Real fix is AST-level class conversion (v1.65b).
+
+---
+
 ## v1.64 — Repo memory: learned patterns from Fixer fixes (2026-05-19)
 
 **Problem:** Model repeats the same import/API mistakes across tasks in the same repo (trpc T2: TS2307 bad import path happened 6 times). The `failures` table counted errors but didn't inject the lesson into future task context.
