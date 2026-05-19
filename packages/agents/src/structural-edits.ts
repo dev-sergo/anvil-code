@@ -806,3 +806,103 @@ export function locateAddExport(content: string, source: string): LocateResult {
     edit: { kind: 'insert', line: 1, text: source + '\n' },
   };
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Type member insertion (add_type_member)
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/**
+ * add_type_member: insert a new member into a top-level interface or type-alias
+ * object type. The model names the type and passes the member declaration text
+ * (e.g. `retry?: number`); the runtime locates the closing `}` and inserts the
+ * member before it, using the existing member indent style.
+ *
+ * Handles: InterfaceDeclaration, TypeAliasDeclaration whose type is TypeLiteral.
+ * Errors when:
+ *  - the named type is not found at top level
+ *  - it's a type alias but not an object literal type
+ *  - a member with the same name already exists (use replace_in_file to change it)
+ *  - the closing `}` is not on its own line
+ */
+export function locateAddTypeMember(
+  content: string,
+  typeName: string,
+  member: string,
+): LocateResult {
+  const sf = parseFile(content);
+
+  // Find interface or type alias.
+  let membersNode: ts.NodeArray<ts.TypeElement> | null = null;
+  let closingBraceParent: ts.Node | null = null;
+
+  for (const stmt of sf.statements) {
+    if (ts.isInterfaceDeclaration(stmt) && stmt.name.text === typeName) {
+      membersNode = stmt.members;
+      closingBraceParent = stmt;
+      break;
+    }
+    if (ts.isTypeAliasDeclaration(stmt) && stmt.name.text === typeName) {
+      if (ts.isTypeLiteralNode(stmt.type)) {
+        membersNode = stmt.type.members;
+        closingBraceParent = stmt.type;
+        break;
+      }
+      return {
+        ok: false,
+        error: `type alias '${typeName}' exists but is not an object type literal — use replace_in_file`,
+      };
+    }
+  }
+
+  if (!closingBraceParent || membersNode === null) {
+    return { ok: false, error: `interface or object type '${typeName}' not found at top level` };
+  }
+
+  // Check for existing member with the same name.
+  const memberNameMatch = member.match(/^(\w+)/);
+  if (memberNameMatch) {
+    const newName = memberNameMatch[1];
+    for (const m of membersNode) {
+      if (m.name && ts.isIdentifier(m.name) && m.name.text === newName) {
+        return {
+          ok: false,
+          error: `member '${newName}' already exists in '${typeName}'; use replace_in_file to modify it`,
+        };
+      }
+    }
+  }
+
+  // Closing brace: getEnd() - 1 for `}`.
+  const closeBracePos = closingBraceParent.getEnd() - 1;
+  const { line: closeBraceLine0 } = sf.getLineAndCharacterOfPosition(closeBracePos);
+
+  const lines = content.split('\n');
+  const closeBraceLineText = lines[closeBraceLine0] ?? '';
+  if (closeBraceLineText.trim() !== '}' && closeBraceLineText.trim() !== '};') {
+    return {
+      ok: false,
+      error:
+        `'${typeName}' closing brace shares its line with other content; ` +
+        `use replace_in_file to add the member manually`,
+    };
+  }
+
+  // Derive indent from existing members or closing brace + 2 spaces.
+  let memberIndent: string;
+  if (membersNode.length > 0) {
+    const first = membersNode[0];
+    const { line: ml0 } = sf.getLineAndCharacterOfPosition(first.getStart(sf, false));
+    memberIndent = lineIndent(content, ml0);
+  } else {
+    memberIndent = lineIndent(content, closeBraceLine0) + '  ';
+  }
+
+  // Normalize member: strip trailing semicolons and add one consistently.
+  const memberTrimmed = member.replace(/;+$/, '');
+  const text = (membersNode.length > 0 ? '' : '') + `${memberIndent}${memberTrimmed};\n`;
+
+  return {
+    ok: true,
+    edit: { kind: 'insert', line: closeBraceLine0 + 1, text },
+  };
+}

@@ -6,6 +6,7 @@ import {
   locateAddRoute,
   locateAddImport,
   locateAddExport,
+  locateAddTypeMember,
 } from '../structural-edits.js';
 
 /**
@@ -715,5 +716,53 @@ describe('locateReplaceMethod v2 (v1.50)', () => {
     // v1.55 — current content included so Coder skips the read_file round-trip
     expect(r.error).toContain('header = (name: string): string | undefined =>');
     expect(r.error).toMatch(/Current content \(lines \d+–\d+\)/);
+  });
+});
+
+describe('locateAddTypeMember', () => {
+  const interfaceContent = `export interface DataLoaderOptions<K, V> {
+  batchFn: (keys: K[]) => Promise<V[]>;
+  maxBatchSize?: number;
+}
+`;
+
+  it('inserts member into interface before closing brace', () => {
+    const r = locateAddTypeMember(interfaceContent, 'DataLoaderOptions', 'retry?: number');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.edit.kind).toBe('insert');
+    if (r.edit.kind !== 'insert') return;
+    expect(r.edit.text).toContain('retry?: number;');
+    expect(r.edit.line).toBe(4); // line of closing }
+  });
+
+  it('works on type alias object literal', () => {
+    const typeContent = `type Options = {\n  foo: string;\n};\n`;
+    const r = locateAddTypeMember(typeContent, 'Options', 'bar?: number');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.edit.kind).toBe('insert');
+    if (r.edit.kind !== 'insert') return;
+    expect(r.edit.text).toContain('bar?: number;');
+  });
+
+  it('errors when type not found', () => {
+    const r = locateAddTypeMember(interfaceContent, 'Missing', 'x: string');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('Missing');
+  });
+
+  it('errors when member already exists', () => {
+    const r = locateAddTypeMember(interfaceContent, 'DataLoaderOptions', 'maxBatchSize?: number');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain('maxBatchSize');
+  });
+
+  it('errors on non-object type alias', () => {
+    const content = `type Foo = string | number;\n`;
+    const r = locateAddTypeMember(content, 'Foo', 'x: string');
+    expect(r.ok).toBe(false);
   });
 });

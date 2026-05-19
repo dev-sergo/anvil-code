@@ -14,7 +14,7 @@ import type { ToolLoopMessage } from '@rag-system/model-router';
 import { WorkingSet } from '../working-set.js';
 
 describe('TOOL_DEFINITIONS', () => {
-  it('exposes the line-coordinate tools (4) + structural tools (6) + done', () => {
+  it('exposes the line-coordinate tools (4) + structural tools (7) + done', () => {
     const names = TOOL_DEFINITIONS.map(t => t.function.name);
     expect(names).toEqual([
       // Line-coordinate / fallback tools
@@ -29,6 +29,8 @@ describe('TOOL_DEFINITIONS', () => {
       'add_route',
       'add_import',
       'add_export',
+      // v1.65b — type member insertion
+      'add_type_member',
       // Loop terminator
       'done',
     ]);

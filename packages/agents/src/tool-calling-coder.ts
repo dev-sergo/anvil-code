@@ -10,6 +10,7 @@ import {
   locateAddRoute,
   locateAddImport,
   locateAddExport,
+  locateAddTypeMember,
 } from './structural-edits.js';
 import type { LocateResult } from './structural-edits.js';
 
@@ -360,6 +361,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'add_type_member',
+      description:
+        "Add a new member to a top-level interface or object-type alias. Pass the member declaration in `member` (e.g. `retry?: number`, `onError: (err: Error) => void`). The runtime locates the type by name, checks that the member doesn't already exist, and inserts it before the closing `}` with correct indentation. Errors if the type is not found, the member already exists (use replace_in_file to change it), or the type is not an object literal. Works on both `interface Foo { ... }` and `type Foo = { ... }`.",
+      parameters: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', description: 'Project-relative file path' },
+          type_name: { type: 'string', description: 'Name of the interface or type alias to add the member to' },
+          member: { type: 'string', description: 'Member declaration without surrounding braces, e.g. `retry?: number` or `onError?: (error: Error) => void`' },
+        },
+        required: ['file', 'type_name', 'member'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'done',
       description:
         'Signal that all changes for the current step are complete. After this, the runtime hands the file changes to the validator. Call this exactly once when finished. Do not call done() if you have made no changes — instead, call replace_in_file/create_file at least once first.',
@@ -385,6 +403,7 @@ export const FILE_ARG_KEY: Record<string, string> = {
   add_route: 'file',
   add_import: 'file',
   add_export: 'file',
+  add_type_member: 'file',
 };
 
 /**
@@ -401,6 +420,7 @@ export const WRITE_EMITTING_TOOLS = new Set([
   'add_route',
   'add_import',
   'add_export',
+  'add_type_member',
 ]);
 
 /**
@@ -785,6 +805,16 @@ export function dispatchToolCall(
       if (!source) return { text: 'error: add_export requires "source" (the full export statement)', done: false };
       return executeStructuralEdit('add_export', filePath, ws, policy, c =>
         locateAddExport(c, source),
+      );
+    }
+    case 'add_type_member': {
+      const filePath = String(args.file ?? '');
+      const typeName = String(args.type_name ?? '');
+      const member = String(args.member ?? '');
+      if (!typeName) return { text: 'error: add_type_member requires "type_name"', done: false };
+      if (!member) return { text: 'error: add_type_member requires "member"', done: false };
+      return executeStructuralEdit('add_type_member', filePath, ws, policy, c =>
+        locateAddTypeMember(c, typeName, member),
       );
     }
     case 'done': {
