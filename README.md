@@ -14,18 +14,11 @@
 </p>
 
 <p align="center">
-  <em>Anvil-Code — local autonomous coding agent for TypeScript. Submits tasks, plans, writes code, validates, and commits.<br/>
-  Runs on your own GPU. No cloud. No subscriptions. No telemetry.</em>
+  <em>Local autonomous coding agent for TypeScript — runs on your GPU, no cloud, no subscriptions.</em>
 </p>
-
-```
-POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer ×3 → git commit
-```
 
 <p align="center">
   <img src="assets/demo.gif" alt="Anvil-Code in VSCode — task submitted, SSE stream of pipeline phases, commit hash in toast" width="820"/>
-  <br/>
-  <em>Submit task → live SSE stream → commit. See <a href="docs/SETUP.md">docs/SETUP.md</a> to reproduce.</em>
 </p>
 
 ---
