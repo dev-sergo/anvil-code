@@ -22,17 +22,11 @@
 POST /task → Planner → Architect → Coder → Tester → Reviewer → Fixer ×3 → git commit
 ```
 
-<!--
-  Demo gif lives at assets/demo.gif (not yet captured).
-  Recording guide (automated terminal + manual VSCode UI): docs/demo/RECORDING.md
-  Once assets/demo.gif exists, uncomment the block below and remove this comment.
-
 <p align="center">
   <img src="assets/demo.gif" alt="Anvil-Code in VSCode — task submitted, SSE stream of pipeline phases, commit hash in toast" width="820"/>
   <br/>
   <em>Submit task → live SSE stream → commit. See <a href="docs/SETUP.md">docs/SETUP.md</a> to reproduce.</em>
 </p>
--->
 
 ---
 
