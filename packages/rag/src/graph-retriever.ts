@@ -6,6 +6,7 @@ import { config, logger, taskEvents } from '@rag-system/shared';
 import { createEmbedBackend, effectiveEmbedModel } from '@rag-system/model-router';
 import type { ModelBackend } from '@rag-system/model-router';
 import { ASTParser, CodeGraph } from '@rag-system/code-graph';
+import type { SymbolTable } from '@rag-system/memory';
 import { VectorStore } from './vector-store.js';
 import { QdrantVectorStore } from './qdrant-vector-store.js';
 import { BM25Index } from './bm25.js';
@@ -54,6 +55,8 @@ interface RetrieverStore {
   deleteFileHash(filePath: string): void;
   getCachedEmbedding(cacheKey: string): number[] | undefined;
   saveCachedEmbedding(cacheKey: string, vector: number[]): void;
+  // v1.67 — optional; present when store is a MemoryStore
+  symbolTable?: SymbolTable;
 }
 
 // v1.66 — packages like shared/utils/types are cross-cutting: filtering them
@@ -250,7 +253,7 @@ export class GraphRetriever {
     const pkgScope = extractPackageName(query);
     const vectorFilter = pkgScope ? { packageName: pkgScope } : undefined;
     if (pkgScope) {
-      logger.debug({ packageName: pkgScope }, 'Qdrant scope filter applied');
+      logger.info({ packageName: pkgScope }, 'Qdrant scope filter applied');
     }
 
     // Vector + BM25 + reranker retrieval — skipped when index is empty.
@@ -334,36 +337,63 @@ export class GraphRetriever {
       }
     }
 
-    // v1.46 — N-hop transitive caller BFS (was 1-hop in v1.43).
-    // Finds the full cross-service callsite graph: callers → callers-of-callers
-    // → ... up to RAG_GRAPH_HOPS levels. Each hop expands only the NEW symbols
-    // discovered in the previous level (frontier), so the work stays O(callsites)
-    // rather than O(n²). Deduplication against `seen` prevents double-counting.
-    // Token budget is enforced per symbol — the BFS stops naturally when the
-    // context window fills before exhausting all hops.
+    // v1.67 — transitive caller expansion via SQL recursive CTE (depth ≤ graphHops).
+    // Falls back to in-memory BFS when SQLite symbol table is empty (fresh install
+    // or first indexCodebase not yet run).
     if (primarySymbolNames.length > 0) {
       const seen = new Set(items.map(i => i.symbolName));
-      // Mark primary symbols as seen so BFS doesn't re-add them.
       for (const name of primarySymbolNames) seen.add(name);
 
-      const transitive = this.codeGraph.getTransitiveCallers(
-        primarySymbolNames,
-        config.rag.graphHops,
-        seen,
-        config.rag.graphCallersPerSymbol,
-      );
+      const symbolTable = this.store?.symbolTable;
+      const useSQL = symbolTable && symbolTable.symbolCount > 0;
 
-      for (const caller of transitive) {
-        const callerTokens = Math.ceil(caller.text.length / 4);
-        if (tokenEstimate + callerTokens > maxTokens) break;
-        items.push({
-          symbolName: caller.name,
-          filePath: caller.filePath,
-          startLine: caller.startLine,
-          endLine: caller.endLine,
-          text: caller.text,
-        });
-        tokenEstimate += callerTokens;
+      if (useSQL) {
+        const callerRows = symbolTable.getTransitiveCallers(
+          primarySymbolNames,
+          config.rag.graphHops,
+        );
+        for (const row of callerRows) {
+          if (seen.has(row.name)) continue;
+          seen.add(row.name);
+          const text = row.body ?? '';
+          const callerTokens = Math.ceil(text.length / 4);
+          if (tokenEstimate + callerTokens > maxTokens) break;
+          // Look up full symbol from CodeGraph to get accurate line numbers / text.
+          const sym = this.codeGraph.getSymbol(row.name);
+          items.push({
+            symbolName: row.name,
+            filePath: sym?.filePath ?? row.filePath,
+            startLine: sym?.startLine ?? row.startLine,
+            endLine: sym?.endLine ?? row.endLine,
+            text: sym?.text ?? text,
+          });
+          tokenEstimate += Math.ceil((sym?.text ?? text).length / 4);
+        }
+        logger.debug(
+          { seeds: primarySymbolNames.length, callers: callerRows.length, depth: config.rag.graphHops },
+          'RAG SQL transitive callers',
+        );
+      } else {
+        // BFS fallback (no SQLite data yet) — cap at 1 to avoid noise regression
+        // seen with hops=3 BFS in v1.46 bench (11→9/12). SQL path handles depth 3.
+        const transitive = this.codeGraph.getTransitiveCallers(
+          primarySymbolNames,
+          Math.min(1, config.rag.graphHops),
+          seen,
+          config.rag.graphCallersPerSymbol,
+        );
+        for (const caller of transitive) {
+          const callerTokens = Math.ceil(caller.text.length / 4);
+          if (tokenEstimate + callerTokens > maxTokens) break;
+          items.push({
+            symbolName: caller.name,
+            filePath: caller.filePath,
+            startLine: caller.startLine,
+            endLine: caller.endLine,
+            text: caller.text,
+          });
+          tokenEstimate += callerTokens;
+        }
       }
     }
 
@@ -398,10 +428,19 @@ export class GraphRetriever {
     const symbols = this.parser.parseFile(filePath);
     if (symbols.length === 0) {
       this.codeGraph.removeFile(filePath);
+      // v1.67 — also remove from SQLite symbol table
+      this.store?.symbolTable?.removeFile(filePath);
       return;
     }
 
     this.codeGraph.addFile(filePath, symbols);
+
+    // v1.67 — write symbols + dependency edges to SQLite for multi-hop CTE queries.
+    const pkgName = extractPackageName(filePath);
+    this.store?.symbolTable?.upsertFile(filePath, symbols, {
+      packageName: pkgName,
+      extractDeps: (sym) => this.parser.extractDependencies(sym),
+    });
 
     await Promise.all(symbols.map(async (symbol) => {
       // BM25 corpus: path components + symbol name ×3 (boost exact-name matches)
@@ -418,7 +457,6 @@ export class GraphRetriever {
       const embedText = `${symbol.kind} ${symbol.name}: ${symbol.text}`;
       try {
         const vector = await this.embedWithCache(embedText, 'document');
-        const pkgName = extractPackageName(filePath);
         await this.vectorStore.add(symbol.name, vector, {
           filePath,
           kind: symbol.kind,
@@ -437,6 +475,7 @@ export class GraphRetriever {
       this.bm25Index.remove(sym.name);
     }
     this.codeGraph.removeFile(filePath);
+    this.store?.symbolTable?.removeFile(filePath);
     if (this.store) this.store.deleteFileHash(filePath);
     logger.debug({ filePath, removed: symbols.length }, 'File removed from index');
   }

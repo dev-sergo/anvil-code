@@ -3,19 +3,23 @@ import { config, logger } from '@rag-system/shared';
 import path from 'path';
 import fs from 'fs';
 import type { TaskRecord, ADRRecord, FailureRecord, RepoPatternRecord } from './types.js';
+import { SymbolTable } from './symbol-table.js';
 
 export class MemoryStore {
   private db: Database.Database;
+  readonly symbolTable: SymbolTable;
 
   constructor(dbPath?: string) {
     const resolved = path.resolve(dbPath ?? config.memory.dbPath);
     fs.mkdirSync(path.dirname(resolved), { recursive: true });
     this.db = new Database(resolved);
     this.init();
+    this.symbolTable = new SymbolTable(this.db);
     logger.debug({ dbPath: resolved }, 'MemoryStore initialized');
   }
 
   private init(): void {
+    this.db.exec('PRAGMA foreign_keys = ON');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
@@ -55,6 +59,27 @@ export class MemoryStore {
         issue TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now'))
       );
+
+      CREATE TABLE IF NOT EXISTS symbols (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        name         TEXT NOT NULL,
+        kind         TEXT NOT NULL,
+        file_path    TEXT NOT NULL,
+        start_line   INTEGER NOT NULL,
+        end_line     INTEGER NOT NULL,
+        body         TEXT,
+        package_name TEXT,
+        UNIQUE(name, file_path)
+      );
+      CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+      CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path);
+
+      CREATE TABLE IF NOT EXISTS dependencies (
+        from_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+        to_id   INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+        PRIMARY KEY (from_id, to_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_id);
     `);
   }
 

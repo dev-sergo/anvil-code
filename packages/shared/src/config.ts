@@ -77,13 +77,10 @@ export const config = {
     bm25Enabled: envBool('RAG_BM25_ENABLED', true),
     bm25Candidates: Math.max(1, envInt('RAG_BM25_CANDIDATES', 30)),
     // v1.46 — transitive caller expansion depth for the reverse-dependency BFS.
-    // 1 = direct callers only — validated at 11/12 (92%) on hono + trpc bench.
-    // Higher values (2-3) help cross-service refactoring tasks that need to see
-    // all callsites, but increase context noise in dense monorepos (3938 symbols
-    // in trpc): v1.46 bench with hops=3 showed 11→9/12 regression. Conservative
-    // default 1 matches v1.43 behaviour; raise via RAG_GRAPH_HOPS for explicit
-    // cross-service tasks.
-    graphHops: Math.min(4, Math.max(1, envInt('RAG_GRAPH_HOPS', 1))),
+    // v1.67 — default raised to 3 (was 1). SQL recursive CTE with DISTINCT + LIMIT 200
+    // avoids the noise regression that BFS/depth-3 caused in v1.46 (11→9/12).
+    // BFS fallback (no SQLite data) still caps at 1 for safety.
+    graphHops: Math.min(4, Math.max(1, envInt('RAG_GRAPH_HOPS', 3))),
     // v1.46 — max callers surfaced per primary symbol per hop.
     graphCallersPerSymbol: Math.max(1, envInt('RAG_CALLERS_PER_SYMBOL', 3)),
   },

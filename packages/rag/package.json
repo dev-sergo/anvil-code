@@ -17,6 +17,7 @@
   "dependencies": {
     "@qdrant/js-client-rest": "^1.18.0",
     "@rag-system/code-graph": "*",
+    "@rag-system/memory": "*",
     "@rag-system/model-router": "*",
     "@rag-system/shared": "*",
     "chokidar": "^3.6.0",
