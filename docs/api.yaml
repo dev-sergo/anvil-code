@@ -12,7 +12,7 @@ info:
     Rate limit: 60 requests / minute per IP.
   license:
     name: MIT
-    url: https://github.com/BubnovSA/anvil-code/blob/main/LICENSE
+    url: https://github.com/bubnov-io/anvil-code/blob/main/LICENSE
 
 servers:
   - url: http://localhost:3000

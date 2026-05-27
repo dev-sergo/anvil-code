@@ -111,7 +111,7 @@ Full endpoint reference: [llama-api-reference.md](llama-api-reference.md).
 ### 3a. Clone and build
 
 ```bash
-git clone https://github.com/BubnovSA/anvil-code.git
+git clone https://github.com/bubnov-io/anvil-code.git
 cd anvil-code
 npm install
 npm run build

@@ -6,7 +6,7 @@
   "publisher": "rag-system",
   "license": "MIT",
   "icon": "assets/icon.png",
-  "repository": { "type": "git", "url": "https://github.com/BubnovSA/anvil-code.git" },
+  "repository": { "type": "git", "url": "https://github.com/bubnov-io/anvil-code.git" },
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other", "Machine Learning"],
   "keywords": ["ai", "llm", "local-ai", "typescript", "code-assistant", "rag"],

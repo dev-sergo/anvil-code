@@ -9,7 +9,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/BubnovSA/anvil-code.git
+git clone https://github.com/bubnov-io/anvil-code.git
 cd anvil-code
 npm install
 npm run build

@@ -192,7 +192,7 @@ Install [llama-swap](https://github.com/mostlygeek/llama-swap), point it at your
 ### 2. Clone, install, build
 
 ```bash
-git clone https://github.com/BubnovSA/anvil-code.git
+git clone https://github.com/bubnov-io/anvil-code.git
 cd anvil-code
 npm install && npm run build
 ```
@@ -314,4 +314,4 @@ In practice, this means:
 - ⚠️ **Keep attribution** — the original license and copyright notice must appear in copies or significant portions
 - ⚠️ **No warranty** — the software is provided as-is; the author is not liable for damages
 
-Copyright © 2026 BubnovSA. Built with [llama.cpp](https://github.com/ggerganov/llama.cpp) and [llama-swap](https://github.com/mostlygeek/llama-swap).
+Copyright © 2026 bubnov-io. Built with [llama.cpp](https://github.com/ggerganov/llama.cpp) and [llama-swap](https://github.com/mostlygeek/llama-swap).
