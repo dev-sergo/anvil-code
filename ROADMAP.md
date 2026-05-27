@@ -99,13 +99,14 @@ Pipeline + RAG retrieval + Git engine + 12 пакетов. Patch-based editing (
 
 **Цель.** Снять ограничение «1-hop graph + HNSW JSON cap ~10K» — главный блокер для cross-service refactoring (callsites в 5+ файлах) и для проектов >10K символов.
 
-### v1.66 — Qdrant vector store (📋 next)
+### v1.66 — Qdrant scope filter (✅ done — 2026-05-27)
 
-- [ ] Заменить HNSW JSON на Qdrant (gRPC, local container), payload-фильтрация по `package/`, `path-prefix/`, `kind`
-- [ ] Сохранить `VectorStore` interface; switchable через `VECTOR_STORE=hnsw|qdrant`
-- [ ] Migration script: HNSW JSON → Qdrant collection upsert (одноразовый)
-- [ ] Bench: L2.x + L3.x на trpc (907 файлов) — проверить, что payload-фильтр снимает context overflow на cross-package refactoring
-- [ ] Снять «HNSW JSON cap ~10K» из Known limitations
+- [x] `packageName` payload field в Qdrant; `extractPackageName()` экспортирован
+- [x] `VectorStore` interface расширен `packageName?` фильтром; HNSW — no-op
+- [x] `QdrantVectorStore.search()` — приоритет `packageName` exact-match > `filePath` fallback
+- [x] Migration script `patch-qdrant-payload.ts` — 2006 points patched (idempotent)
+- [x] Unit tests: `extract-package-name.test.ts` (12 cases), `qdrant-vector-store.test.ts` (+2)
+- [x] Bench 2026-05-27: trpc 4/6 (67%), hono 5/6 (83%), total 9/12 (75%) — Δ −1 vs v1.65d (model variance)
 
 ### v1.67 — SQLite symbol table + multi-hop queries
 

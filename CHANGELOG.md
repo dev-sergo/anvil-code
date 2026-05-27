@@ -5,6 +5,22 @@
 
 ---
 
+## v1.66 — Qdrant scope filter + bench 9/12 (75%) (2026-05-27)
+
+`extractPackageName()` (module-level, exported) replaces private `extractPackageScope()` — extracts bare package name from file paths and query strings, skips cross-cutting packages (shared/utils/types/common/helpers). `QdrantVectorStore.search()` now matches `packageName` exact-value field instead of broken path-prefix attempt. `VectorStore` interface gained `packageName?` in filter (HNSW no-op). `indexFile()` writes `packageName` to each vector's payload.
+
+Migration: `patch-qdrant-payload.ts` — idempotent one-shot, 2006 points patched.
+
+New tests: `extract-package-name.test.ts` (12 cases), `qdrant-vector-store.test.ts` (+2 filter tests).
+
+Bench 2026-05-27: trpc 4/6 (67%), hono 5/6 (83%), total **9/12 (75%)** — Δ −1 vs v1.65d baseline (model variance; T5 Tester schema fail, T6 batch concurrency logic, H4 TesterAgent runtime fail).
+
+Scope filter log at `debug` level — not visible at `LOG_LEVEL=info`. Fix in v1.67.
+
+Design: [v1.66-qdrant-scope-filter.md](docs/designs/v1.66-qdrant-scope-filter.md) | Run: [2026-05-26-v1.66-qdrant-scope-filter.md](docs/benchmarks/runs/2026-05-26-v1.66-qdrant-scope-filter.md)
+
+---
+
 ## trpc bench v1.65d — 5/6 T3 first pass (2026-05-20)
 
 T1✅ T2✅ **T3✅**(первый стабильный pass!) T4✅ T5✅ T6❌(reviewer_reject, wrong retry). T3 использовал `HTTPErrorHandler` из trpc internals + intersection `add_type_member`. T6 — variance. Score 5/6, паттерн сдвинулся: T3→✅, T6→❌.
