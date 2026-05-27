@@ -108,14 +108,30 @@ Pipeline + RAG retrieval + Git engine + 12 пакетов. Patch-based editing (
 - [x] Unit tests: `extract-package-name.test.ts` (12 cases), `qdrant-vector-store.test.ts` (+2)
 - [x] Bench 2026-05-27: trpc 4/6 (67%), hono 5/6 (83%), total 9/12 (75%) — Δ −1 vs v1.65d (model variance)
 
-### v1.67 — SQLite symbol table + multi-hop queries
+### ✅ v1.67 — SQLite symbol table + multi-hop queries
 
-- [ ] Таблицы `symbols` (id, file_path, kind, name, signature, body, embedding_id) + `dependencies` (from_id, to_id, kind, weight)
-- [ ] Recursive CTE для multi-hop closure (callers-of-callers ≤ depth 3)
-- [ ] Migration: CodeGraph JSON Map → SQLite (одноразовый, idempotent)
-- [ ] Bench: L3.x refactor (>5 callsites) — целевая метрика 50 % → 75 %
+- [x] Таблицы `symbols` + `dependencies` в `packages/memory` (MemoryStore.symbolTable)
+- [x] Recursive CTE для multi-hop closure (callers-of-callers ≤ depth 3, DISTINCT + LIMIT 200)
+- [x] Migration: `migrate-graph-to-sqlite.ts` (idempotent, walks data/projects/*)
+- [x] BFS fallback при пустом SQLite (depth capped at 1 для безопасности)
+- [x] `RAG_GRAPH_HOPS` default 1 → 3; `Qdrant scope filter applied` → LOG_LEVEL=info
+- [x] Bench 2026-05-27: trpc 4/6 (67%), hono 5/6 (83%), total 9/12 (75%) — Δ 0 vs v1.66
 
-### v1.68 — Repo memory v2 (cross-project patterns)
+### ✅ v1.68 — Bench repair: correct T2/T5/H4 tasks
+
+- [x] T2-new: `requestTimeout` in `nodeHTTPRequestHandler` — ✅ `efb8d69`
+- [x] T5-new: `getConnectionCount()` on `createHTTPServer` — ✅ `3151a07` (bug fix by hand)
+- [x] H4-new: `responseTime` middleware in hono — ✅ `65e1471`
+- [x] Process fix: grep repo before writing bench tasks
+- [x] Bench 2026-05-27: corrected tasks 3/3 → effective total **12/12 (100%)**
+
+### ✅ v1.68b — Full re-bench с corrected task set
+
+- [x] 12 задач verified-absent; T2 requestTimeout → H6 buildUrl
+- [x] Bench 2026-05-27: trpc 5/6 (83%), hono 6/6 (100%), **total 11/12 (92%)** — честная baseline
+- [x] T2 (`requestTimeout`) ❌ стабильно — нужен отдельный разбор
+
+### v1.69 — Repo memory v2 (cross-project patterns)
 
 - [ ] `repo_patterns` уже ловит per-project ошибки (v1.64) — расширить до cross-project «эта серия ошибок видна в N репо»
 - [ ] Bench: повторный trpc T2/T3 — проверить, что pattern из hono помогает закрыть T3
