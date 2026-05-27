@@ -26,7 +26,8 @@ function extractPackageName(filePath: string): string | undefined {
 async function patchCollection(client: QdrantClient, collectionName: string): Promise<void> {
   console.log(`\nPatching collection: ${collectionName}`);
 
-  let offset: string | number | null = null;
+  // next_page_offset can be string | number | Record<string,unknown> | null per Qdrant types
+  let offset: string | number | Record<string, unknown> | null = null;
   let totalScanned = 0;
   let totalPatched = 0;
   let totalSkipped = 0;
