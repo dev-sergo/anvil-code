@@ -92,14 +92,18 @@ export class QdrantVectorStore {
   async search(
     vector: number[],
     k: number,
-    filter?: { filePath?: string },
+    filter?: { filePath?: string; packageName?: string },
   ): Promise<VectorSearchResult[]> {
     await this.ready;
     if (this._size === 0) return [];
 
-    const qdrantFilter = filter?.filePath
-      ? { must: [{ key: 'filePath', match: { value: filter.filePath } }] }
-      : undefined;
+    // v1.66 — prefer packageName exact match (reliable) over filePath exact match
+    // (broken: stored payload has absolute path, filter has relative prefix).
+    const qdrantFilter = filter?.packageName
+      ? { must: [{ key: 'packageName', match: { value: filter.packageName } }] }
+      : filter?.filePath
+        ? { must: [{ key: 'filePath', match: { value: filter.filePath } }] }
+        : undefined;
 
     try {
       const results = await this.client.search(this.collectionName, {

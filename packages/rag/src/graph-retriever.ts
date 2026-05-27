@@ -56,6 +56,23 @@ interface RetrieverStore {
   saveCachedEmbedding(cacheKey: string, vector: number[]): void;
 }
 
+// v1.66 — packages like shared/utils/types are cross-cutting: filtering them
+// out would silently drop context every caller needs. Skip scope filter for these.
+const SCOPE_SKIP = new Set(['shared', 'utils', 'types', 'common', 'helpers']);
+
+/**
+ * v1.66 — Extract the package name from a file path or query string.
+ * Returns the `<name>` from `packages/<name>/...` segments.
+ * Returns undefined for cross-cutting packages (shared/utils/types/common/helpers)
+ * and when no `packages/` segment is present.
+ */
+export function extractPackageName(source: string): string | undefined {
+  const m = source.match(/\bpackages\/([\w.-]+)/);
+  if (!m) return undefined;
+  const name = m[1]!;
+  return SCOPE_SKIP.has(name) ? undefined : name;
+}
+
 export class GraphRetriever {
   private vectorStore: AnyVectorStore;
   private codeGraph: CodeGraph;
@@ -214,19 +231,6 @@ export class GraphRetriever {
     return items.map(item => `// ${item.filePath}:${item.startLine}\n${item.text}`).join('\n\n---\n\n');
   }
 
-  // v1.48 — extract a package-path scope from the query for Qdrant payload
-  // filtering. Returns the first `packages/xxx` segment found so Qdrant can
-  // restrict the search to that package's files. Returns undefined when no
-  // package path is mentioned (single-file or sandbox tasks).
-  // v1.48 — extract package scope from query for Qdrant payload filtering.
-  // Takes at most 3 path segments (packages/name/src or packages/name) so a
-  // filename like `dataLoader.ts` doesn't end up in the filter path.
-  private extractPackageScope(query: string): string | undefined {
-    // Match "packages/<pkg>" or "packages/<pkg>/<subdir>" but stop there.
-    const m = query.match(/\bpackages\/[\w.-]+(?:\/[\w.-]+)?(?=\/|$|\s|[^/\w.-])/);
-    return m ? m[0] : undefined;
-  }
-
   async retrieveContextItems(query: string, k = 5): Promise<ContextItem[]> {
     // v1.42 — monorepo meta is always injected regardless of vector index size.
     // v1.42: return early only when BOTH index is empty AND no meta is available.
@@ -239,12 +243,15 @@ export class GraphRetriever {
     // the 2-hop caller expansion only queries for primary symbols, not their deps.
     const primarySymbolNames: string[] = [];
 
-    // v1.48 — scope-filtered retrieval for Qdrant backend. When the query names
-    // a specific package path, restrict vector search to files under that path so
-    // cross-package noise doesn't fill the context window. HNSW silently ignores
-    // the filter (global ANN). Falls back to unfiltered when scope is undefined.
-    const scope = this.extractPackageScope(query);
-    const vectorFilter = scope ? { filePath: scope } : undefined;
+    // v1.66 — scope-filtered retrieval for Qdrant backend. Extracts package name
+    // from query and passes it as exact-match filter on the `packageName` payload
+    // field. HNSW silently ignores the filter (global ANN). Falls back to
+    // unfiltered when no package name is detected or for cross-cutting packages.
+    const pkgScope = extractPackageName(query);
+    const vectorFilter = pkgScope ? { packageName: pkgScope } : undefined;
+    if (pkgScope) {
+      logger.debug({ packageName: pkgScope }, 'Qdrant scope filter applied');
+    }
 
     // Vector + BM25 + reranker retrieval — skipped when index is empty.
     if (this.vectorStore.size > 0) {
@@ -411,7 +418,12 @@ export class GraphRetriever {
       const embedText = `${symbol.kind} ${symbol.name}: ${symbol.text}`;
       try {
         const vector = await this.embedWithCache(embedText, 'document');
-        await this.vectorStore.add(symbol.name, vector, { filePath, kind: symbol.kind });
+        const pkgName = extractPackageName(filePath);
+        await this.vectorStore.add(symbol.name, vector, {
+          filePath,
+          kind: symbol.kind,
+          ...(pkgName ? { packageName: pkgName } : {}),
+        });
       } catch {
         // Embed backend unavailable — skip vector, code graph still populated
       }

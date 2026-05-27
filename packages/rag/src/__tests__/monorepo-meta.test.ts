@@ -33,7 +33,7 @@ vi.mock('hnswlib-node', () => ({
   },
 }));
 
-const { GraphRetriever } = await import('../graph-retriever.js');
+const { GraphRetriever, extractPackageName } = await import('../graph-retriever.js');
 
 type GraphRetrieverPrivate = {
   monorepoMeta: string | null;
@@ -131,15 +131,11 @@ describe('GraphRetriever monorepo meta (v1.42)', () => {
     expect(items[0].text).toContain('@svc/api');
   });
 
-  it('extractPackageScope detects packages/xxx path from query', () => {
-    const retriever = new GraphRetriever(undefined, { graphsDir: tmpGraphs });
-    const extract = (q: string) =>
-      (retriever as unknown as { extractPackageScope(q: string): string | undefined }).extractPackageScope(q);
-
-    expect(extract('Add retry to packages/server/src/dataLoader.ts')).toBe('packages/server/src');
-    expect(extract('packages/client/src/links/httpLink.ts')).toBe('packages/client/src');
-    expect(extract('Add /health endpoint to src/routes/users.ts')).toBeUndefined();
-    expect(extract('Add JSDoc to TRPCError class')).toBeUndefined();
+  it('extractPackageName detects package name from query (v1.66)', () => {
+    expect(extractPackageName('Add retry to packages/server/src/dataLoader.ts')).toBe('server');
+    expect(extractPackageName('packages/client/src/links/httpLink.ts')).toBe('client');
+    expect(extractPackageName('Add /health endpoint to src/routes/users.ts')).toBeUndefined();
+    expect(extractPackageName('Add JSDoc to TRPCError class')).toBeUndefined();
   });
 
   it('returns empty when no tsconfig paths and no packages', async () => {

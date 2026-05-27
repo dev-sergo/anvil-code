@@ -86,7 +86,7 @@ export class VectorStore {
 
   // filter is accepted for interface compatibility with QdrantVectorStore but
   // ignored — HNSW performs a global ANN search without payload filtering.
-  async search(vector: number[], k: number, _filter?: { filePath?: string }): Promise<VectorSearchResult[]> {
+  async search(vector: number[], k: number, _filter?: { filePath?: string; packageName?: string }): Promise<VectorSearchResult[]> {
     const count = this.nextLabel;
     if (count === 0) return [];
 

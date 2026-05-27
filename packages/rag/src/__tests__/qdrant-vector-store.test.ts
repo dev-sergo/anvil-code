@@ -93,16 +93,29 @@ describe('QdrantVectorStore (v1.47)', () => {
     expect(mockClient.search).not.toHaveBeenCalled();
   });
 
-  it('passes filePath filter to Qdrant when scope provided', async () => {
+  it('passes packageName filter to Qdrant when provided (v1.66)', async () => {
     mockClient.search.mockResolvedValue([
       { id: 'uuid-1', score: 0.8, payload: { symbolName: 'ServerFunc' } },
     ]);
     const store = new QdrantVectorStore('/tmp/v', 'http://localhost:6333', 3);
     await store.loadFromDisk();
     (store as unknown as { _size: number })._size = 10;
-    await store.search([1, 0, 0], 5, { filePath: 'packages/server/src' });
-    const searchCall = mockClient.search.mock.calls[0] as [string, { filter?: unknown }];
+    await store.search([1, 0, 0], 5, { packageName: 'server' });
+    const searchCall = mockClient.search.mock.calls[0] as [string, { filter?: { must: Array<{ key: string; match: { value: string } }> } }];
     expect(searchCall[1].filter).toBeDefined();
+    expect(searchCall[1].filter!.must[0]!.key).toBe('packageName');
+    expect(searchCall[1].filter!.must[0]!.match.value).toBe('server');
+  });
+
+  it('falls back to filePath filter when only filePath is given (backward compat)', async () => {
+    mockClient.search.mockResolvedValue([]);
+    const store = new QdrantVectorStore('/tmp/v', 'http://localhost:6333', 3);
+    await store.loadFromDisk();
+    (store as unknown as { _size: number })._size = 10;
+    await store.search([1, 0, 0], 5, { filePath: 'packages/server/src' });
+    const searchCall = mockClient.search.mock.calls[0] as [string, { filter?: { must: Array<{ key: string }> } }];
+    expect(searchCall[1].filter).toBeDefined();
+    expect(searchCall[1].filter!.must[0]!.key).toBe('filePath');
   });
 
   it('search without filter sends no Qdrant filter', async () => {
