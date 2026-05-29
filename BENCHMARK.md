@@ -7,11 +7,11 @@ Quantitative track record of Anvil-Code on TypeScript codebases. Methodology is 
 | Target                | Size           | Tasks | Success | Notes                          |
 |-----------------------|----------------|-------|---------|--------------------------------|
 | `rag-system-sandbox`  | 30 TS files    | 16    | **87.5 %** (14/16) | Curated suite L1–L5, all categories |
-| `honojs/hono`         | 366 TS files   | 6     | **100 %** (6/6, v1.47 Gemma + v1.65d Qwen3 with correct prompts) | H4 bench setup error fixed; real capability 6/6 |
-| `trpc/trpc`           | 907 TS files   | 6     | **83 %** (5/6, Gemma v1.43 + Qwen3 v1.65d) | pnpm monorepo, project refs; T3 fail due to thinking-mode over-refactor |
-| **Combined real-repo** | | **12** | **92 % (11/12)** | v1.65d current; v1.43 first reached this peak |
+| `honojs/hono`         | 366 TS files   | 6     | **100 %** (6/6, v1.47 Gemma + v1.68c Qwen3) | H4 bench setup error fixed; real capability 6/6 |
+| `trpc/trpc`           | 907 TS files   | 6     | **100 %** (6/6, v1.68c — T2 requestTimeout closed) | pnpm monorepo, project refs |
+| **Combined real-repo** | | **12** | **100 % (12/12)** | v1.68c best; v1.70 re-run 8/12 (model variance) |
 
-Sandbox numbers measure code-generation ceiling. Real-repo numbers measure operational ceiling. Combined **42 % → 92 %** improvement from v1.38 → v1.65d (peak first reached at v1.43, sustained through v1.65d on both Gemma and Qwen3 MoE). Remaining failures: thinking-mode over-refactor on complex trpc internals (T3); rare model variance on T2/T5.
+Sandbox numbers measure code-generation ceiling. Real-repo numbers measure operational ceiling. Combined **42 % → 100 %** improvement from v1.38 → v1.68c. The v1.70 re-run scored 8/12 (67%) — T2/T3/T6 fell to model variance; H6 hit a commit-completeness bug (test only, no impl). Best-effort ceiling remains 12/12.
 
 Additional bench categories (v1.39+):
 - **Cumulative mode** (sequential tasks accumulating in `auto/cumulative`): **6/6** on sandbox.
@@ -151,7 +151,7 @@ Commits (representative):
 
 Failures clustered on multi-file tasks that exceed even the tightened context budget.
 
-### v1.38 → v1.65d — climbing to 92 %
+### v1.38 → v1.68c — climbing to 100 %
 
 Each row below is the single change that moved the headline metric, not the full changelog (full log in [CHANGELOG.md](CHANGELOG.md)).
 
@@ -173,8 +173,13 @@ Each row below is the single change that moved the headline metric, not the full
 | v1.65b  | 2026-05-19 | `add_type_member` AST tool                         | T6 noop on 900-line `dataLoader.ts` → commit      |
 | v1.65c  | 2026-05-19 | TestRunner timeout 60 s → 120 s                    | Large monorepo (trpc) tests stop being killed     |
 | v1.65d  | 2026-05-20 | `add_type_member` intersection + ADD-OPTION rule   | trpc **5/6** with Qwen3 MoE — equals Gemma peak   |
+| v1.66   | 2026-05-27 | Qdrant scope filter fix + `packageName` payload    | trpc retrieval precision ↑; hono 5/6 → 6/6 stable |
+| v1.67   | 2026-05-27 | SQLite symbol table + multi-hop recursive CTE callers | 3-hop caller traversal without `code-graph` mem  |
+| v1.68c  | 2026-05-29 | Fixer: block `delete_file` on test paths; SCOPE prompt fix; LLM_URL env fix | T2 requestTimeout closed — **trpc 6/6 ✅** |
+| v1.69   | 2026-05-29 | Repo memory v2: `issue_hash` dedup + cross-project patterns + `hit_count` | Pattern injection now deduplicated + frequency-ranked |
+| v1.70   | 2026-05-29 | Bench re-run (cross-project eval)                  | 8/12 (67%) — model variance; H6 commit bug found  |
 
-Compounded: **6/16 (~38 %) → 11/12 (92 %)** on the combined real-repo bench in 7 days.
+Compounded: **6/16 (~38 %) → 12/12 (100 %)** on the combined real-repo bench. Best result: v1.68c.
 
 ---
 

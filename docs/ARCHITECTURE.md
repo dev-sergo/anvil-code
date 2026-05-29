@@ -103,6 +103,17 @@ The code graph (`packages/code-graph/`) carries a **reverse index** (`reverseInd
 
 Bench result: 6/6 sequential tasks committed on sandbox with zero manual merges (v1.45, 2026-05-15).
 
+## SQLite symbol table (v1.67)
+
+`packages/memory/src/symbol-table.ts` stores parsed symbols in per-project SQLite alongside the `MemoryStore`. Two tables:
+
+- **`symbols`** — `(id, name, kind, file_path, start_line, end_line, body, package_name)` with a UNIQUE constraint on `(name, file_path)`.
+- **`dependencies`** — `(from_id, to_id)` with cascade deletes. Bidirectional index on `to_id` for reverse callers.
+
+`SymbolTable.getCallers(name)` runs a **recursive CTE** (`WITH RECURSIVE callers(id) AS (...)`) to traverse multi-hop caller chains in a single SQL query — O(depth × fan-out) without loading the full graph into memory. This complements the in-memory `code-graph` reverse index by persisting across restarts and scaling to large repos where the full graph doesn't fit in RAM.
+
+The `@rag-system/memory` package exposes `SymbolTable` via `MemoryStore.symbolTable`.
+
 ## Qdrant vector backend (Phase 5)
 
 Activated via `VECTOR_BACKEND=qdrant` (default `hnsw`). Requires a running Qdrant instance:
@@ -129,6 +140,18 @@ docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
 2. **Property arrow function fallback:** Many real classes express methods as `name = (...) => { ... }` properties rather than `MethodDeclaration` syntax. v1 returned "not found"; v2 detects the `PropertyDeclaration` and returns a precise error: "spans lines X–Y, use `replace_in_file(file, X, Y, new_text)`". The Coder system prompt has explicit 3-step recovery guidance for this pattern.
 
 L6 bench (large-file surgery, v1.50): 3/4 — overload disambiguation works on 489-line files; complex generics in 780-line files exceed model capability.
+
+## Repo memory v2 — cross-project patterns (v1.69)
+
+`MemoryStore.saveRepoPattern(projectId, issue)` stores Fixer-fixed validation errors in `repo_patterns` (per-project SQLite). Before each task, the Orchestrator injects them as a "learned constraints" block into the Planner/Coder prompt so recurring mistakes aren't repeated.
+
+**v1.69 additions:**
+- `issue_hash = sha256(normalize(issue))[0:16]` — content-based dedup key. A UNIQUE index on `issue_hash` means the same error is one row, not 50.
+- `ON CONFLICT(issue_hash) DO UPDATE SET hit_count += 1` — frequency signal. `getRepoPatterns()` orders by `hit_count DESC`.
+- `MemoryStore.getCrossProjectPatterns(currentProjectId, registryDbPath, dataRoot)` — opens all registered project DBs read-only, merges patterns by `issue_hash`, sums `hit_count` across projects. Patterns from other projects are labeled `(cross-project)` in the prompt.
+- Format: `[×3] (cross-project) Cannot find module './X.js' — add .js extension` — frequency + origin in one line.
+
+Note: `repo_patterns` schema migrates forward via `PRAGMA table_info` checks + `ALTER TABLE ADD COLUMN` — safe on existing DBs.
 
 ## Task cancellation (v1.49)
 
@@ -159,7 +182,7 @@ The SSE event format is defined in `packages/shared/src/task-events.ts`. High-fr
 |---------------------|----------------------------|------------------------------------------|
 | `@rag-system/shared`     | `packages/shared`     | Types, config, logger, task-event bus    |
 | `@rag-system/model-router` | `packages/model-router` | LlamaSwap + Ollama clients; per-role alias routing |
-| `@rag-system/memory`     | `packages/memory`     | SQLite store: tasks, ADRs, failures, embedding cache, projects |
+| `@rag-system/memory`     | `packages/memory`     | SQLite store: tasks, ADRs, failures, embedding cache, projects, `SymbolTable` (v1.67), cross-project `repo_patterns` (v1.69) |
 | `@rag-system/safe-exec`  | `packages/safe-exec`  | File writes, backups, diffs, edit-applier, prettier, test runner |
 | `@rag-system/git-engine` | `packages/git-engine` | `simple-git` wrapper for branch + commit |
 | `@rag-system/code-graph` | `packages/code-graph` | AST parser, code-graph, repo-map builder |
@@ -192,3 +215,4 @@ For the rationale behind specific decisions:
 - [docs/designs/v1.34-hybrid-search.md](designs/v1.34-hybrid-search.md) — BM25 + dense via RRF
 - [docs/designs/v1.35-coder-reviewer-fix.md](designs/v1.35-coder-reviewer-fix.md) — pre-Reviewer TS check, Gemma 4 as Coder
 - [docs/designs/v1.37-l5x-comprehensive-bench.md](designs/v1.37-l5x-comprehensive-bench.md) — comprehensive benchmark methodology
+- [docs/designs/v1.69-repo-memory-v2.md](designs/v1.69-repo-memory-v2.md) — cross-project patterns + content dedup + frequency ranking

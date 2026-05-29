@@ -1,3 +1,6 @@
+# Claude Code local settings (machine-specific permissions)
+.claude/
+
 # Dependencies
 node_modules/
 

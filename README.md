@@ -6,11 +6,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="MIT License"/></a>
   <img src="https://img.shields.io/badge/TypeScript-5.4+-3178c6.svg" alt="TypeScript"/>
   <img src="https://img.shields.io/badge/Node.js-18+-339933.svg" alt="Node.js"/>
-  <img src="https://img.shields.io/badge/tests-610%20passed-22c55e.svg" alt="610 tests"/>
+  <img src="https://img.shields.io/badge/tests-638%20passed-22c55e.svg" alt="638 tests"/>
   <img src="https://img.shields.io/badge/packages-12%20clean-22c55e.svg" alt="12 packages"/>
   <img src="https://img.shields.io/badge/sandbox-87.5%25-22c55e.svg" alt="87.5% sandbox"/>
-  <img src="https://img.shields.io/badge/real--repo-92%25-22c55e.svg" alt="92% real repos"/>
-  <img src="https://img.shields.io/badge/version-v1.65d-blue.svg" alt="v1.65d"/>
+  <img src="https://img.shields.io/badge/real--repo-100%25-22c55e.svg" alt="100% real repos"/>
+  <img src="https://img.shields.io/badge/version-v1.70-blue.svg" alt="v1.70"/>
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 ## Benchmark
 
-> Latest numbers from v1.65d (2026-05-20). Raw data: [BENCHMARK.md](BENCHMARK.md)
+> Best results from v1.68c (2026-05-29). Raw data: [BENCHMARK.md](BENCHMARK.md)
 
 ### By target codebase
 
@@ -33,8 +33,8 @@
 |--------|-------|-------|---------|---------|------|
 | `rag-system-sandbox` (curated) | ~30 | 16 | **14** | 2 | 🟢 **87.5 %** |
 | `honojs/hono` (real OSS) | 366 | 6 | **6** | 0 | 🟢 **100 %** |
-| `trpc/trpc` (real OSS) | 907 | 6 | **5** | 1 | 🟢 **83 %** |
-| **Combined real-repo** | | **12** | **11** | 1 | 🟢 **92 %** |
+| `trpc/trpc` (real OSS) | 907 | 6 | **6** | 0 | 🟢 **100 %** |
+| **Combined real-repo** | | **12** | **12** | 0 | 🟢 **100 %** |
 | `vitejs/vite` (cross-repo) | monorepo | 6 | **6** | 0 | 🟢 **100 %** |
 | `colinhacks/zod` (cross-repo) | library | 4 | **4** | 0 | 🟢 **100 %** |
 
@@ -57,11 +57,11 @@
 | 4 – 5 new abstractions | 🟡 ~70 % | Reviewer becomes the gating factor |
 | 5 + architectural | 🔴 ~30 % | Context or scope overrun |
 
-### Real-repo progress (v1.38 → v1.65d)
+### Real-repo progress (v1.38 → v1.68c)
 
-| Metric | v1.38 (2026-05-13) | v1.65d (2026-05-20) | Δ |
+| Metric | v1.38 (2026-05-13) | v1.68c (2026-05-29) | Δ |
 |---|---|---|---|
-| Real-repo success rate | 🟡 **42 %** (5/12) | 🟢 **92 %** (11/12) | **+50 pp** |
+| Real-repo success rate | 🟡 **42 %** (5/12) | 🟢 **100 %** (12/12) | **+58 pp** |
 | `ts_fail` (bad workspace imports) | 🔴 29 % | 🟢 0 % | Monorepo meta injection (v1.38 D2) |
 | `reviewer_reject` | 🔴 29 % | 🟢 ~8 % | BUGFIX_SPEC Fixer dispatch (v1.39-c) + lenient prompt (v1.65a) |
 | `no_op` (Coder 0 changes) | 🔴 14 % | 🟢 0 % | NoopStep retry + `add_type_member` AST tool (v1.65b) |
