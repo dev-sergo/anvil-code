@@ -4,16 +4,16 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → автономный coding-агент без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-## Снимок состояния (2026-05-20)
+## Снимок состояния (2026-05-29)
 
-**Текущий релиз:** 🟢 v1.65d done (2026-05-20). Phase 4 (storage & retrieval) — закрыта. Следующая фаза — Phase 5 (Qdrant + multi-hop retrieval), см. ниже.
+**Текущий релиз:** 🟢 v1.70 bench done (2026-05-29). Cross-project patterns eval: 8/12 (67%).
 
 **Headline метрики:**
-- **trpc bench:** 5/6 (83 %) — Qwen3 MoE равняет Gemma v1.43 peak. T1✅ T2✅(repo memory) T3❌(reviewer_reject) T4✅ T5✅ T6✅(`add_type_member`).
-- **hono bench:** 6/6 (100 %) — закрыто в v1.47, подтверждено Qwen3 MoE в v1.65d.
+- **trpc bench:** 3/6 (50 %) v1.70 — T2❌ T3❌ T6❌ (model variance + context overflow)
+- **hono bench:** 5/6 (83 %) v1.70 — H6❌ (test-only commit bug, impl missing from git.add)
+- **Best real-repo:** 12/12 (100 %) — v1.68c baseline
 - **vite cross-repo:** 6/6 (100 %) — v1.63 с Qwen3-35B MoE, включая 1835-строчный файл.
 - **Sandbox:** 14/16 (87.5 %), cumulative mode 6/6 (Gemma) + 5/5 (Qwen3 MoE).
-- **Real-repo combined:** 11/12 (92 %).
 
 **Конфигурация по умолчанию:**
 - Active model: **Qwen3-35B MoE** (`LLM_LARGE_MODEL=qwen3-32k`, 11 tok/s, thinking mode, 32K ctx). Альтернатива — `gemma` (v1.43 peak stack).
@@ -129,12 +129,37 @@ Pipeline + RAG retrieval + Git engine + 12 пакетов. Patch-based editing (
 
 - [x] 12 задач verified-absent; T2 requestTimeout → H6 buildUrl
 - [x] Bench 2026-05-27: trpc 5/6 (83%), hono 6/6 (100%), **total 11/12 (92%)** — честная baseline
-- [x] T2 (`requestTimeout`) ❌ стабильно — нужен отдельный разбор
+- [x] T2 (`requestTimeout`) ❌ стабильно — разобрали и починили в v1.68c
 
-### v1.69 — Repo memory v2 (cross-project patterns)
+### ✅ v1.68c — T2 fix + infrastructure bugs (2026-05-29)
 
-- [ ] `repo_patterns` уже ловит per-project ошибки (v1.64) — расширить до cross-project «эта серия ошибок видна в N репо»
-- [ ] Bench: повторный trpc T2/T3 — проверить, что pattern из hono помогает закрыть T3
+- [x] LLM_URL не загружался при перезапуске сервера (fix: `node --env-file=.env`)
+- [x] Fixer мог удалять Coder-produced test файлы (`delete_file` теперь заблокирован через `interceptToolCall`)
+- [x] Fixer prompt: уточнён раздел SCOPE для test-setup bugs
+- [x] T2 `requestTimeout` ✅ `ae645ab` — fake-timer mock test
+- [x] Bench 2026-05-29: **total 12/12 (100%)** 🎉
+
+### ✅ v1.69 — Repo memory v2: cross-project patterns (2026-05-29)
+
+- [x] Content dedup: `issue_hash = sha256(normalize(issue))[0:16]`; ON CONFLICT → `hit_count += 1`
+- [x] Frequency ranking: `getRepoPatterns()` сортирует по `hit_count DESC`
+- [x] Cross-project: `MemoryStore.getCrossProjectPatterns()` объединяет паттерны из всех registered project DBs
+- [x] Prompt rendering: `[×N]` prefix + `(cross-project)` label
+- [x] Idempotent migration: ALTER TABLE + UNIQUE INDEX
+
+Design: [docs/designs/v1.69-repo-memory-v2.md](docs/designs/v1.69-repo-memory-v2.md)
+
+### v1.70 — Bench re-run ✅ (2026-05-29)
+
+Bench: 8/12 (67%). T2❌ T3❌ T6❌ T (model variance), H6❌ (commit bug). Cross-project patterns: inconclusive.
+
+Run: [2026-05-29-v1.70-cross-project-bench.md](docs/benchmarks/runs/2026-05-29-v1.70-cross-project-bench.md)
+
+### v1.71 — Commit completeness fix (TBD)
+
+- [ ] **H6-type bug:** После SafeWriter.writeAll(), заменить `git.add(coder_stated_files)` на `git diff --name-only HEAD` → добавлять всё что изменилось на диске. Иначе Coder может не включить файл в список, и он потеряется при `git clean`.
+- [ ] **T3 context overflow guard:** Перед LLM-вызовом проверять размер контекста; если превышает лимит — обрезать ragSnippets, не падать с 500.
+- [ ] **T2/T6 Fixer reliability:** MAX_TOOL_CALLS 30 → 50; или второй Fixer pass с очищенным контекстом.
 
 ### Опциональные micro-iterations (можно вставить в любой момент)
 

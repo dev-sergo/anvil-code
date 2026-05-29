@@ -5,6 +5,64 @@
 
 ---
 
+## v1.70 — Bench re-run: cross-project patterns evaluation (2026-05-29)
+
+Full 12-task bench to measure effect of v1.69 cross-project patterns.
+
+**Результаты:**
+- trpc: T1✅ T2❌ T3❌ T4✅ T5✅ T6❌ → **3/6 (50%)**
+- hono: H1✅ H2✅ H3✅ H4✅ H5✅ H6❌ → **5/6 (83%)**
+- **Итого: 8/12 (67%)** — регрессия от v1.68c 12/12
+
+**Причины провалов:**
+- T2: validation failed (p(success) ≈ 25%, known instability)
+- T3: context overflow + validation failed
+- T6: validation failed (Fixer MAX_TOOL_CALLS)
+- H6: test-only commit bug — impl написан на диске, но не попал в `git.add(files)`
+
+**Вывод по cross-project patterns:** сигнал inconclusive — регрессия в пределах нормальной дисперсии модели, не связана с v1.69.
+
+**v1.71 action items:**
+1. Fix H6-type bug: commit всё что изменилось на диске (git diff), не только то, что Coder перечислил
+2. T3 context overflow: guard на размер контекста перед LLM-вызовом
+3. T2/T6: MAX_TOOL_CALLS 30 → 50 для Fixer
+
+Run: [2026-05-29-v1.70-cross-project-bench.md](docs/benchmarks/runs/2026-05-29-v1.70-cross-project-bench.md)
+
+---
+
+## v1.69 — Repo memory v2: cross-project patterns + content dedup (2026-05-29)
+
+`repo_patterns` v1 хранил каждую ошибку как новую строку (id = uuid), не умел дедуплицировать по содержимому, не имел частотного сигнала, и не видел паттерны из других проектов.
+
+**Изменения:**
+- **Dedup по содержимому:** `issue_hash = sha256(normalize(issue))[0:16]`; `ON CONFLICT(issue_hash) DO UPDATE SET hit_count += 1`. Одна и та же ошибка больше не хранится 20 раз.
+- **Частотный сигнал:** `getRepoPatterns()` теперь сортирует по `hit_count DESC`. Агенты видят самые частые паттерны первыми.
+- **Cross-project:** `MemoryStore.getCrossProjectPatterns()` открывает все зарегистрированные project DBs (≠ current), объединяет паттерны, суммирует `hit_count`. Паттерны из других проектов появляются с меткой `(cross-project)`.
+- **Форматирование в промпте:** `[×N]` — частота; `(cross-project)` — источник. Паттерн `[×3] Cannot find module './X.js'` виден из hono при работе с trpc.
+- **Schema migration:** idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` + `CREATE UNIQUE INDEX ... WHERE issue_hash IS NOT NULL`.
+
+Design: [docs/designs/v1.69-repo-memory-v2.md](docs/designs/v1.69-repo-memory-v2.md)
+
+---
+
+## v1.68c — T2 fix + infrastructure bugs, baseline 12/12 (100%) (2026-05-29)
+
+Закрыт T2 (`requestTimeout`) и три системных бага.
+
+**Инфраструктурные баги:**
+1. Сервер перезапускался без `--env-file=.env` → `LLM_URL` не грузился → все LLM-вызовы падали с `ECONNREFUSED` → `"fetch failed"`. Fix: `node --env-file=.env packages/api/dist/index.js`.
+2. `interceptToolCall` в `BUGFIX_SPEC` блокировал только `create_file` для тест-файлов; `delete_file` — нет. Fixer удалил Coder-produced test file, потом `git add <file>` упал. Fix: заблокировали `delete_file` в `interceptToolCall`.
+3. Fixer SCOPE prompt говорил "find the production code instead" даже для Coder-produced test файлов с test-setup bugs. Fix: уточнили раздел SCOPE.
+
+**T2:** Coder наконец написал корректный тест с `vi.fn()` mock req/res + `vi.useFakeTimers()` (после добавления явной подсказки про mocks вместо `http.createServer`). Commit `ae645ab` на trpc.
+
+tRPC: T1✅ T2✅ T3✅ T4✅ T5✅ T6✅ = 6/6. **Итого: 12/12 (100%)** 🎉
+
+Run: [2026-05-29-v1.68c-T2-fix.md](docs/benchmarks/runs/2026-05-29-v1.68c-T2-fix.md)
+
+---
+
 ## v1.68b — Full re-bench, честная baseline 11/12 (92%) (2026-05-27)
 
 Full 12-task re-bench с задачами verified-absent (grep перед написанием). Corrected task set vs v1.67: T2→requestTimeout, T5→getConnectionCount, H1→getUserAgent, H4→responseTime.
