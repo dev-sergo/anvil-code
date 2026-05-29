@@ -55,10 +55,12 @@ export class Orchestrator {
   private baselineFailures: Set<string> | null = null;
   /** Cached result of reading "type":"module" from root package.json. */
   private esmProject: boolean | null = null;
-  /** v1.64 — Validation errors auto-fixed in previous tasks; injected into Planner/Coder context. */
+  /** v1.69 — Formatted pattern strings injected into Planner/Coder context. */
   private repoPatterns: string[] = [];
 
   constructor(
+    private projectId: string,
+    private dataRoot: string,
     private router: ModelRouter,
     private retriever: GraphRetriever,
     private writer: SafeWriter,
@@ -134,8 +136,31 @@ export class Orchestrator {
     // 0. Compute baseline failures once on clean state (before any branch / file changes).
     await this.computeBaseline();
 
-    // v1.64 — load repo-specific patterns learned from previous tasks' Fixer fixes.
-    this.repoPatterns = this.store.getRepoPatterns().map(p => p.issue);
+    // v1.69 — load repo-specific patterns: local + cross-project, formatted with [×N] label.
+    const localPatterns = this.store.getRepoPatterns(5);
+    const crossPatterns = MemoryStore.getCrossProjectPatterns(
+      this.projectId,
+      config.projects.registryPath,
+      this.dataRoot,
+      5,
+    );
+    // Merge: dedup by issueHash, local takes priority for isLocal flag, sum hitCount.
+    const merged = new Map<string, { issue: string; hitCount: number; isLocal: boolean }>();
+    for (const p of localPatterns) {
+      const key = p.issueHash ?? p.issue;
+      merged.set(key, { issue: p.issue, hitCount: p.hitCount, isLocal: true });
+    }
+    for (const p of crossPatterns) {
+      const key = p.issueHash ?? p.issue;
+      if (!merged.has(key)) {
+        merged.set(key, { issue: p.issue, hitCount: p.hitCount, isLocal: false });
+      } else {
+        merged.get(key)!.hitCount += p.hitCount;
+      }
+    }
+    this.repoPatterns = [...merged.values()]
+      .sort((a, b) => b.hitCount - a.hitCount)
+      .map(p => `[×${p.hitCount}]${p.isLocal ? '' : ' (cross-project)'} ${p.issue}`);
 
     // 1. Create Git Branch
     const branchName = await this.git.createBranchForTask(taskId);
@@ -1458,7 +1483,7 @@ export class Orchestrator {
         // so future tasks see them in context and avoid the same mistake.
         if (prevIssues.length > 0) {
           for (const issue of prevIssues) {
-            this.store.saveRepoPattern(`${taskId}-${attempt}-${Date.now()}`, issue);
+            this.store.saveRepoPattern(this.projectId, issue);
           }
           log.info({ count: prevIssues.length }, 'Saved repo patterns from Fixer fix');
         }

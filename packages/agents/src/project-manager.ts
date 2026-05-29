@@ -1,4 +1,4 @@
-import { logger } from '@rag-system/shared';
+import { logger, config } from '@rag-system/shared';
 import { MemoryStore, ProjectRegistry, projectPaths } from '@rag-system/memory';
 import type { Project } from '@rag-system/memory';
 import { GraphRetriever } from '@rag-system/rag';
@@ -82,7 +82,7 @@ export class ProjectManager {
     const writer = new SafeWriter(project.root);
     const backups = new BackupManager(paths.backupsDir);
     const git = new GitEngine(project.root);
-    const orchestrator = new Orchestrator(this.router, retriever, writer, store, git);
+    const orchestrator = new Orchestrator(project.id, config.dataRoot, this.router, retriever, writer, store, git);
 
     return { project, store, retriever, writer, backups, git, orchestrator };
   }

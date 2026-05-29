@@ -47,7 +47,7 @@ WORKFLOW:
 3. Make the smallest edit that resolves the issue. ADDRESS ONLY LISTED ISSUES — don't refactor working code.
 4. Repeat for each issue, then call done().
 
-SCOPE: read_file on any non-forbidden path grants write access to that path for the rest of this loop. So the resolution path for "I want to edit X but it's not in my allowed list" is always: call read_file(X), then retry the edit. Forbidden paths (package.json, tsconfig, lockfiles, .env, vitest/jest config, .gitignore) are never writable. Test files (tests/, __tests__/, *.test.ts, *.spec.ts) are not writable unless the Coder produced them — find the production code instead.
+SCOPE: read_file on any non-forbidden path grants write access to that path for the rest of this loop. So the resolution path for "I want to edit X but it's not in my allowed list" is always: call read_file(X), then retry the edit. Forbidden paths (package.json, tsconfig, lockfiles, .env, vitest/jest config, .gitignore) are never writable. Test files (tests/, __tests__/, *.test.ts, *.spec.ts) are not writable unless the Coder produced them. If the Coder produced the test file (it will appear in the "Files the Coder already produced" list) AND the issue is a test-setup bug (wrong mock, wrong vi API name, missing required option field, callback firing too early), fix the test file directly with replace_in_file — do NOT chase production code for test-setup problems.
 
 COMMON TS PATTERNS:
 - "Cannot find name 'X'" → add_import the missing symbol. Don't delete the code that uses it.
@@ -141,6 +141,15 @@ export const BUGFIX_SPEC: TaskAgentSpec = {
         `error: Fixer cannot create test files (${filePath}). ` +
         `The bug is in the production module — find and edit that instead. ` +
         `Read the failing test's import statements to locate the production file, then call read_file on it.`
+      );
+    }
+    if (toolName === 'delete_file' && isTestPath(filePath)) {
+      return (
+        `error: Fixer cannot delete test files (${filePath}). ` +
+        `Deleting tests is not a valid fix — it just hides the problem. ` +
+        `If the test has a setup bug (wrong mock, wrong import, wrong API call), fix it with replace_in_file. ` +
+        `If the test file was produced by the Coder (it appears in "Files the Coder already produced"), ` +
+        `you are allowed and expected to edit it directly. Do NOT delete it.`
       );
     }
     return null;

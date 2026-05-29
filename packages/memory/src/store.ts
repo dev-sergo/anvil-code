@@ -1,9 +1,31 @@
 import Database from 'better-sqlite3';
+import crypto from 'crypto';
 import { config, logger } from '@rag-system/shared';
 import path from 'path';
 import fs from 'fs';
 import type { TaskRecord, ADRRecord, FailureRecord, RepoPatternRecord } from './types.js';
 import { SymbolTable } from './symbol-table.js';
+
+function normalizeIssue(s: string): string {
+  return s.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+function issueHash(issue: string): string {
+  return crypto.createHash('sha256').update(normalizeIssue(issue)).digest('hex').slice(0, 16);
+}
+
+function rowToPattern(row: Record<string, unknown>, isLocal: boolean): RepoPatternRecord {
+  return {
+    id: row.id as string,
+    issue: row.issue as string,
+    projectId: (row.project_id as string | null) ?? '',
+    hitCount: (row.hit_count as number | null) ?? 1,
+    issueHash: (row.issue_hash as string | null) ?? undefined,
+    isLocal,
+    createdAt: (row.created_at as string | null) ?? undefined,
+    lastSeen: (row.last_seen as string | null) ?? undefined,
+  };
+}
 
 export class MemoryStore {
   private db: Database.Database;
@@ -60,6 +82,7 @@ export class MemoryStore {
         created_at TEXT DEFAULT (datetime('now'))
       );
 
+
       CREATE TABLE IF NOT EXISTS symbols (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         name         TEXT NOT NULL,
@@ -80,6 +103,30 @@ export class MemoryStore {
         PRIMARY KEY (from_id, to_id)
       );
       CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_id);
+    `);
+    this.migrateRepoPatterns();
+  }
+
+  private migrateRepoPatterns(): void {
+    const cols = (this.db.pragma('table_info(repo_patterns)') as Array<{ name: string }>).map(c => c.name);
+    if (!cols.includes('project_id')) {
+      this.db.exec(`ALTER TABLE repo_patterns ADD COLUMN project_id TEXT NOT NULL DEFAULT ''`);
+    }
+    if (!cols.includes('hit_count')) {
+      this.db.exec(`ALTER TABLE repo_patterns ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 1`);
+    }
+    if (!cols.includes('issue_hash')) {
+      this.db.exec(`ALTER TABLE repo_patterns ADD COLUMN issue_hash TEXT`);
+    }
+    if (!cols.includes('last_seen')) {
+      this.db.exec(`ALTER TABLE repo_patterns ADD COLUMN last_seen TEXT`);
+    }
+    // Drop partial index if it exists (partial indexes don't support UPSERT ON CONFLICT target)
+    this.db.exec(`DROP INDEX IF EXISTS repo_patterns_hash_idx`);
+    // Regular UNIQUE INDEX: SQLite treats multiple NULLs as distinct, so old NULL rows coexist safely
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS repo_patterns_hash_idx
+        ON repo_patterns(issue_hash)
     `);
   }
 
@@ -165,19 +212,73 @@ export class MemoryStore {
     return this.db.prepare('SELECT * FROM failures ORDER BY count DESC LIMIT ?').all(limit) as FailureRecord[];
   }
 
-  saveRepoPattern(id: string, issue: string): void {
+  saveRepoPattern(projectId: string, issue: string): void {
+    const hash = issueHash(issue);
+    const id = `${hash}-${projectId}`;
     this.db.prepare(`
-      INSERT OR IGNORE INTO repo_patterns (id, issue) VALUES (?, ?)
-    `).run(id, issue.slice(0, 600));
+      INSERT INTO repo_patterns (id, issue, project_id, hit_count, issue_hash, last_seen)
+      VALUES (?, ?, ?, 1, ?, datetime('now'))
+      ON CONFLICT(issue_hash) DO UPDATE SET
+        hit_count = hit_count + 1,
+        last_seen  = datetime('now')
+    `).run(id, issue.slice(0, 600), projectId, hash);
   }
 
   getRepoPatterns(limit = 5): RepoPatternRecord[] {
-    return (this.db.prepare('SELECT * FROM repo_patterns ORDER BY created_at DESC LIMIT ?').all(limit) as Record<string, unknown>[])
-      .map(row => ({
-        id: row.id as string,
-        issue: row.issue as string,
-        createdAt: (row.created_at as string | null) ?? undefined,
-      }));
+    return (this.db
+      .prepare('SELECT * FROM repo_patterns ORDER BY hit_count DESC, last_seen DESC, created_at DESC LIMIT ?')
+      .all(limit) as Record<string, unknown>[])
+      .map(row => rowToPattern(row, true));
+  }
+
+  static getCrossProjectPatterns(
+    currentProjectId: string,
+    registryDbPath: string,
+    dataRoot: string,
+    limit = 5,
+  ): RepoPatternRecord[] {
+    let projectIds: string[] = [];
+    try {
+      const reg = new Database(path.resolve(registryDbPath), { readonly: true });
+      projectIds = (reg.prepare('SELECT id FROM projects').all() as Array<{ id: string }>)
+        .map(r => r.id)
+        .filter(id => id !== currentProjectId);
+      reg.close();
+    } catch {
+      return [];
+    }
+
+    const merged = new Map<string, RepoPatternRecord>();
+    for (const pid of projectIds) {
+      const dbPath = path.resolve(dataRoot, 'projects', pid, 'memory.db');
+      if (!fs.existsSync(dbPath)) continue;
+      try {
+        const db = new Database(dbPath, { readonly: true });
+        const rows = db
+          .prepare(
+            `SELECT * FROM repo_patterns WHERE issue_hash IS NOT NULL
+             ORDER BY hit_count DESC LIMIT ?`,
+          )
+          .all(limit) as Record<string, unknown>[];
+        db.close();
+        for (const row of rows) {
+          const hash = row.issue_hash as string;
+          const existing = merged.get(hash);
+          const hitCount = (row.hit_count as number | null) ?? 1;
+          if (existing) {
+            existing.hitCount += hitCount;
+          } else {
+            merged.set(hash, { ...rowToPattern(row, false), hitCount });
+          }
+        }
+      } catch {
+        // skip unreadable / old-schema DBs
+      }
+    }
+
+    return [...merged.values()]
+      .sort((a, b) => b.hitCount - a.hitCount)
+      .slice(0, limit);
   }
 
   getFileHash(filePath: string): string | undefined {

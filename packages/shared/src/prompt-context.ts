@@ -49,13 +49,11 @@ export function buildPromptContext(input: PromptContextInput): string {
   const sections: string[] = [];
 
   if (input.repoPatterns && input.repoPatterns.length > 0) {
-    const list = input.repoPatterns
-      .map((p, i) => `${i + 1}. ${p}`)
-      .join('\n');
+    const list = input.repoPatterns.map(p => `- ${p}`).join('\n');
     sections.push(
       `# Repo-specific patterns (learned from previous tasks)\n` +
-      `These validation errors were previously encountered and auto-fixed in this project. ` +
-      `They reveal repo-specific constraints — apply them proactively to avoid repeating the same mistakes:\n\n` +
+      `These validation errors were previously encountered and auto-fixed. ` +
+      `Apply them proactively to avoid repeating the same mistakes:\n\n` +
       list
     );
   }

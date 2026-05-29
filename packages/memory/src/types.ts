@@ -27,5 +27,11 @@ export interface FailureRecord {
 export interface RepoPatternRecord {
   id: string;
   issue: string;
+  projectId: string;
+  hitCount: number;
+  issueHash?: string;
+  /** Set at runtime during merge; not stored in DB. */
+  isLocal?: boolean;
   createdAt?: string;
+  lastSeen?: string;
 }

@@ -85,6 +85,8 @@ function buildOrchestrator(opts: {
   };
 
   const orch = new Orchestrator(
+    'test-project-id',
+    '/tmp/data',
     router as never,
     retriever as never,
     writer as never,
@@ -1170,7 +1172,7 @@ describe('detectEsmProductionViolators', () => {
   type DetectFn = (changes: unknown[]) => string[];
 
   function makeOrch() {
-    const orch = new Orchestrator({} as never, {} as never, { root: '/tmp' } as never, {} as never, {} as never);
+    const orch = new Orchestrator('test-project-id', '/tmp/data', {} as never, {} as never, { root: '/tmp' } as never, {} as never, {} as never);
     // Force ESM mode (bypass fs.readFileSync for package.json).
     (orch as unknown as { esmProject: boolean }).esmProject = true;
     const detect = (orch as unknown as { detectEsmProductionViolators: DetectFn }).detectEsmProductionViolators.bind(orch);
