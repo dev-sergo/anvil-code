@@ -18,7 +18,7 @@ npm run build
 ## Running tests
 
 ```bash
-npm test          # all 12 packages, 610 unit tests (3 pre-existing native ASTParser failures are expected)
+npm test          # all 12 packages, 638 unit tests (3 pre-existing native ASTParser failures are expected)
 ```
 
 Tests are pure unit tests — no LLM backend required.

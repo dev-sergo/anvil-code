@@ -1,7 +1,7 @@
 openapi: "3.1.0"
 info:
   title: Anvil-Code API
-  version: "1.38.0"
+  version: "1.70.0"
   description: |
     HTTP API for the Anvil-Code autonomous coding agent.
 
@@ -156,6 +156,28 @@ paths:
                 type: string
                 description: Newline-delimited SSE frames
 
+  /task/{id}/cancel:
+    post:
+      tags: [tasks]
+      summary: Cancel a task (v1.49)
+      description: |
+        Marks a queued or running task as `cancelled`. The Orchestrator polls
+        between step launches — the current step completes naturally, pending
+        steps are skipped. A `cancelled` SSE event is emitted to subscribers.
+      parameters:
+        - $ref: "#/components/parameters/taskId"
+      responses:
+        "200":
+          description: Cancellation acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "404":
+          description: Task not found
+
   /tasks:
     get:
       tags: [tasks]
@@ -260,6 +282,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /project/{id}/healthcheck:
+    get:
+      tags: [projects]
+      summary: Pre-flight environment check (v1.52)
+      description: |
+        Verifies that the project's environment is ready for task execution:
+        TypeScript compilation clean, test suite passing, dependencies installed.
+        Run this before a bench session to surface missing node_modules or broken
+        vitest setups before the first task fails.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "917e347a4b0f"
+      responses:
+        "200":
+          description: Health report
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    description: True only when tscOk and testsOk are both true
+                  tscOk:
+                    type: boolean
+                  testsOk:
+                    type: boolean
+                  issues:
+                    type: array
+                    items:
+                      type: string
+                    description: Human-readable list of detected problems
 
   /index:
     post:
