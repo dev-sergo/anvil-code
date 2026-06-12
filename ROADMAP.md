@@ -155,14 +155,14 @@ Bench: 8/12 (67%). T2❌ T3❌ T6❌ T (model variance), H6❌ (commit bug). Cro
 
 Run: [2026-05-29-v1.70-cross-project-bench.md](docs/benchmarks/runs/2026-05-29-v1.70-cross-project-bench.md)
 
-### ✅ v1.71 — Commit completeness + context guard + Fixer budget (code-complete 2026-06-09)
+### ✅ v1.71 — Commit completeness + context guard + Fixer budget (2026-06-09 / bench 2026-06-12)
 
 - [x] **H6-type bug:** `GitEngine.listWorkingChanges()` (`git status` → все изменённые/untracked пути); оркестратор перед commit объединяет его с заявленным списком файлов вместо того чтобы полагаться только на список Coder'а. Ветка форкается из чистой базы → всё изменённое = вывод задачи.
 - [x] **T3 context overflow guard:** `buildPromptContext` enforce'ит общий байтовый бюджет (`MAX_PROMPT_CONTEXT_BYTES`, 48KB). Прун по приоритету: RAG-сниппеты → repo-map; essential-секции не выбрасываются. Логируется, не silent.
 - [x] **T2/T6 Fixer reliability:** `BUGFIX_SPEC.maxToolCalls` 30 → 50 (как FEATURE_SPEC). Validation loop уже даёт fresh-context ретраи — связывал per-invocation бюджет.
-- [ ] **Bench re-run:** ⏳ pending — нужен локальный llama.cpp endpoint + hono/trpc. Ожидание: H6 ✅ детерминированно, T3 без overflow, T2/T6 частично (model variance ~25% остаётся).
+- [x] **Bench 2026-06-12:** **12/12 (100%)** — trpc 6/6, hono 6/6. +4 vs v1.70. Все три фикса подтверждены.
 
-CHANGELOG: [v1.71](CHANGELOG.md)
+CHANGELOG: [v1.71](CHANGELOG.md) | Run: [2026-06-12-v1.71-bench.md](docs/benchmarks/runs/2026-06-12-v1.71-bench.md)
 
 ### Опциональные micro-iterations (можно вставить в любой момент)
 
