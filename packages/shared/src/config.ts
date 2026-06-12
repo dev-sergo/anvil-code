@@ -63,6 +63,14 @@ export const config = {
     embeddingDim: envInt('EMBEDDING_DIM', 768),
     maxElements: envInt('VECTOR_MAX_ELEMENTS', 10000),
     maxContextTokens: envInt('RAG_MAX_CONTEXT_TOKENS', 8000),
+    // v1.71 — hard byte budget for the *whole* assembled prompt-context block
+    // (conventions + repo-map + sources + RAG snippets + design). Independent
+    // of maxContextTokens, which bounds only RAG retrieval. Guards against the
+    // T3 overflow: an unbounded repo-map on a large repo (trpc, 3938 symbols)
+    // pushed the prompt past the model's window → "Context size has been
+    // exceeded". ~48KB ≈ 12k tokens, leaving headroom in a 32k window for the
+    // agent's system prompt, tool schemas, and generation.
+    maxPromptContextBytes: envInt('MAX_PROMPT_CONTEXT_BYTES', 48 * 1024),
     vectorsPath: env('VECTORS_PATH', 'data/vectors'),
     graphsPath: env('GRAPHS_PATH', 'data/graphs'),
     // v1.47 — vector backend. 'hnsw' uses the existing hnswlib-node index

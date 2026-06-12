@@ -323,6 +323,30 @@ export class Orchestrator {
     // Branch still exists for the operator to inspect; nothing is lost.
     const shouldSkipCommit = !validation.passed && config.git.commitOnlyIfValid;
     if (writtenFiles.length > 0 && !shouldSkipCommit) {
+      // v1.71 — commit-completeness safety net (H6 bug). The agent's stated
+      // file list can omit a file it actually wrote to disk: in v1.70 the
+      // tool-calling Coder wrote `build-url.ts` + `build-url.test.ts` but only
+      // `build-url.test.ts` reached `writtenFiles`, so the impl was committed
+      // as nothing and the next task's `git clean -fd` deleted it. The task
+      // branch is forked from a freshly-cleaned base, so anything git reports
+      // as changed is this task's output — union it in before prettier+commit
+      // so nothing written to disk is lost. Failure here is non-fatal: we fall
+      // back to the agent-stated list.
+      try {
+        const changedOnDisk = await this.git.listWorkingChanges();
+        const missing = changedOnDisk.filter(p => !writtenFiles.includes(p));
+        if (missing.length > 0) {
+          log.warn(
+            { missing, stated: writtenFiles.length },
+            'Files changed on disk but absent from agent file list — staging anyway (H6 guard)',
+          );
+          writtenFiles.push(...missing);
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn({ error: msg }, 'Could not diff working tree for commit-completeness; using stated file list');
+      }
+
       // v1.32-a.6 — prettier post-step. Cosmetics-only: collapses style
       // variance (indent depth, trailing commas, blank lines) so diffs become
       // byte-perfect when the project has prettier configured. Never fails

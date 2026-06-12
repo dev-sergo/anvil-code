@@ -128,7 +128,13 @@ export class TestRunner {
         const exitCode = code ?? 1;
         const success = exitCode === 0;
         logger.info({ exitCode, durationMs, success }, 'TestRunner finished');
-        resolve({ success, output: output.slice(-4000), exitCode, durationMs });
+        // Keep FAIL summary lines (start of vitest output) + error details (end).
+        // Slicing only from the tail loses the FAIL fingerprints that baseline
+        // detection relies on, causing pre-existing failures to escape filtering.
+        const trimmed = output.length > 6000
+          ? output.slice(0, 3000) + '\n...\n' + output.slice(-3000)
+          : output;
+        resolve({ success, output: trimmed, exitCode, durationMs });
       });
 
       proc.on('error', (err) => {

@@ -121,7 +121,13 @@ export const BUGFIX_SPEC: TaskAgentSpec = {
   agentName: 'Fixer(tool-calling)',
   agentRole: 'fixer',
   systemPrompt: FIXER_SYSTEM_PROMPT,
-  maxToolCalls: 30,
+  // v1.71 — raised 30 → 50 (matching FEATURE_SPEC). The v1.70 bench T6
+  // (dataLoader retry) failed because the Fixer exhausted its 30-call budget
+  // mid-repair on a complex multi-file failure and never reached done(). The
+  // validation loop already grants fresh-context retries (MAX_VALIDATION_RETRIES);
+  // the binding constraint was the per-invocation tool budget, not the number
+  // of passes. pruneHistory keeps the larger budget from blowing the context.
+  maxToolCalls: 50,
   pruneHistory: true,
   emitPerFileEvents: false,
   perFileEventLabel: 'Fixer produced',

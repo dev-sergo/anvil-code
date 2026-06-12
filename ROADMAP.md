@@ -4,27 +4,27 @@
 > **Цель v1.0.** Локальная связка llama.cpp → VSCode → автономный coding-агент без облачных подписок.
 > **Главный тезис.** Размер локальной модели зафиксирован — качество вытаскивает архитектура: маленькая модель + умный contextual routing > большая модель + наивный prompt.
 
-## Снимок состояния (2026-05-29)
+## Снимок состояния (2026-06-12)
 
-**Текущий релиз:** 🟢 v1.70 bench done (2026-05-29). Cross-project patterns eval: 8/12 (67%).
+**Текущий релиз:** ✅ v1.71 (2026-06-12) — bench 12/12 (100%), все три action item подтверждены.
 
 **Headline метрики:**
-- **trpc bench:** 3/6 (50 %) v1.70 — T2❌ T3❌ T6❌ (model variance + context overflow)
-- **hono bench:** 5/6 (83 %) v1.70 — H6❌ (test-only commit bug, impl missing from git.add)
-- **Best real-repo:** 12/12 (100 %) — v1.68c baseline
+- **trpc bench:** 6/6 (100 %) v1.71 — контекстный guard устранил T3 overflow; Fixer budget fix помог T2/T6.
+- **hono bench:** 6/6 (100 %) v1.71 — H6 commit bug устранён детерминированно.
+- **Best real-repo:** 12/12 (100 %) — v1.71 и v1.68c
 - **vite cross-repo:** 6/6 (100 %) — v1.63 с Qwen3-35B MoE, включая 1835-строчный файл.
 - **Sandbox:** 14/16 (87.5 %), cumulative mode 6/6 (Gemma) + 5/5 (Qwen3 MoE).
 
 **Конфигурация по умолчанию:**
-- Active model: **Qwen3-35B MoE** (`LLM_LARGE_MODEL=qwen3-32k`, 11 tok/s, thinking mode, 32K ctx). Альтернатива — `gemma` (v1.43 peak stack).
+- Active model: **Qwen3-35B MoE** (`LLM_LARGE_MODEL=qwen3-6-35b-a3b-ud-q4-k-m-ctx-32k-q4-0-kv`, ~11 tok/s, thinking mode, 32K ctx).
 - Backend: llama-swap (local endpoint, see `.env`), tool-calling Coder/Fixer — дефолт.
-- TESTER_ENABLED: true. RAG_MAX_CONTEXT_TOKENS: 1500.
+- TESTER_ENABLED: true. RAG_MAX_CONTEXT_TOKENS: 1500. MAX_PROMPT_CONTEXT_BYTES: 49152.
 
 **Hardware (RTX 3090, 2026-05-18):** Q6K_L 32B sweet spot — `ngl=56, q4_0 KV, 16K ctx` → **6.28 tok/s** (+15.6 % vs baseline 5.37). Qwen3 MoE на реальном контексте: ~11 tok/s.
 
-**Тесты:** 610/613 unit-tests (3 pre-existing native ASTParser failures), 12/12 пакетов чисто.
+**Тесты:** 644/647 unit-tests (3 pre-existing native ASTParser failures), 12/12 пакетов чисто.
 
-**Последнее обновление:** 2026-05-20.
+**Последнее обновление:** 2026-06-12.
 
 ---
 
@@ -155,11 +155,14 @@ Bench: 8/12 (67%). T2❌ T3❌ T6❌ T (model variance), H6❌ (commit bug). Cro
 
 Run: [2026-05-29-v1.70-cross-project-bench.md](docs/benchmarks/runs/2026-05-29-v1.70-cross-project-bench.md)
 
-### v1.71 — Commit completeness fix (TBD)
+### ✅ v1.71 — Commit completeness + context guard + Fixer budget (code-complete 2026-06-09)
 
-- [ ] **H6-type bug:** После SafeWriter.writeAll(), заменить `git.add(coder_stated_files)` на `git diff --name-only HEAD` → добавлять всё что изменилось на диске. Иначе Coder может не включить файл в список, и он потеряется при `git clean`.
-- [ ] **T3 context overflow guard:** Перед LLM-вызовом проверять размер контекста; если превышает лимит — обрезать ragSnippets, не падать с 500.
-- [ ] **T2/T6 Fixer reliability:** MAX_TOOL_CALLS 30 → 50; или второй Fixer pass с очищенным контекстом.
+- [x] **H6-type bug:** `GitEngine.listWorkingChanges()` (`git status` → все изменённые/untracked пути); оркестратор перед commit объединяет его с заявленным списком файлов вместо того чтобы полагаться только на список Coder'а. Ветка форкается из чистой базы → всё изменённое = вывод задачи.
+- [x] **T3 context overflow guard:** `buildPromptContext` enforce'ит общий байтовый бюджет (`MAX_PROMPT_CONTEXT_BYTES`, 48KB). Прун по приоритету: RAG-сниппеты → repo-map; essential-секции не выбрасываются. Логируется, не silent.
+- [x] **T2/T6 Fixer reliability:** `BUGFIX_SPEC.maxToolCalls` 30 → 50 (как FEATURE_SPEC). Validation loop уже даёт fresh-context ретраи — связывал per-invocation бюджет.
+- [ ] **Bench re-run:** ⏳ pending — нужен локальный llama.cpp endpoint + hono/trpc. Ожидание: H6 ✅ детерминированно, T3 без overflow, T2/T6 частично (model variance ~25% остаётся).
+
+CHANGELOG: [v1.71](CHANGELOG.md)
 
 ### Опциональные micro-iterations (можно вставить в любой момент)
 

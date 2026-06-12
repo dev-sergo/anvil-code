@@ -179,3 +179,31 @@ describe('GitEngine — commitChanges pre-commit hook retry (v1.58)', () => {
     expect(gitSpy.commit).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('GitEngine — listWorkingChanges (v1.71 H6 commit-completeness)', () => {
+  beforeEach(() => {
+    mockConfig.git.cumulative.enabled = false;
+    mockConfig.git.defaultBranch = 'main';
+  });
+
+  it('returns every changed path from status.files (tracked + untracked)', async () => {
+    gitSpy = makeGitSpy({
+      status: vi.fn().mockResolvedValue({
+        files: [
+          { path: 'src/build-url.ts', index: '?', working_dir: '?' },      // untracked impl (the H6 file)
+          { path: 'src/build-url.test.ts', index: '?', working_dir: '?' },  // untracked test
+          { path: 'src/router.ts', index: ' ', working_dir: 'M' },          // modified tracked
+        ],
+      }),
+    });
+    const engine = new GitEngine('/tmp');
+    const changed = await engine.listWorkingChanges();
+    expect(changed).toEqual(['src/build-url.ts', 'src/build-url.test.ts', 'src/router.ts']);
+  });
+
+  it('returns an empty list on a clean tree', async () => {
+    gitSpy = makeGitSpy({ status: vi.fn().mockResolvedValue({ files: [] }) });
+    const engine = new GitEngine('/tmp');
+    expect(await engine.listWorkingChanges()).toEqual([]);
+  });
+});

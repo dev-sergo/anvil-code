@@ -5,6 +5,23 @@
 
 ---
 
+## v1.71 — Bench-repair: commit completeness + context guard + Fixer budget (2026-06-09)
+
+Closes the three v1.70 action items. Targeted reliability fixes, no architectural change.
+
+**Изменения:**
+- **H6 commit completeness (детерминированный баг).** В v1.70 tool-calling Coder писал на диск `build-url.ts` + `build-url.test.ts`, но в `writtenFiles` попадал только тест → impl коммитился как ничего и сносился следующим `git clean -fd`. Добавлен `GitEngine.listWorkingChanges()` (`git status` → все изменённые/untracked пути); оркестратор перед prettier+commit объединяет его с заявленным списком файлов. Ветка форкается из чистой базы, поэтому всё изменённое — вывод задачи. Должно вернуть H6 ❌→✅.
+- **T3 context-overflow guard.** `buildPromptContext` получил общий байтовый бюджет (`MAX_PROMPT_CONTEXT_BYTES`, default 48KB ≈ 12k токенов). При превышении секции прунятся по приоритету: сначала RAG-сниппеты, затем repo-map; essential-секции (conventions, файлы-для-правки, recently-modified, design, паттерны) не выбрасываются никогда. Источник T3-падения — неограниченный repo-map на trpc (~4k символов). Прун логируется, не silent.
+- **T2/T6 Fixer reliability.** `BUGFIX_SPEC.maxToolCalls` 30 → 50 (как FEATURE_SPEC). T6 упирался в потолок 30 вызовов на сложном multi-file fix. Validation loop и так даёт fresh-context ретраи; связывал per-invocation бюджет.
+
+**Тесты:** +новые юнит-тесты `listWorkingChanges` (git-engine) и context-budget pruning (shared); обновлён `task-agents` (30→50). Полный прогон: 644 passed (3 pre-existing ASTParser fail без изменений).
+
+**Bench (2026-06-12):** **12/12 (100%)** 🎉 — trpc 6/6, hono 6/6. +4 vs v1.70 (8/12). Все три фикса подтверждены: H6 commit bug устранён, T3 context overflow больше не воспроизводится, Fixer не стопорится на tool-call лимите. Доп. фикс: `test-runner.ts` усечение вывода (tail-only → head+tail), которое ломало baseline fingerprinting на trpc.
+
+Run: [2026-06-12-v1.71-bench.md](docs/benchmarks/runs/2026-06-12-v1.71-bench.md)
+
+---
+
 ## v1.70 — Bench re-run: cross-project patterns evaluation (2026-05-29)
 
 Full 12-task bench to measure effect of v1.69 cross-project patterns.

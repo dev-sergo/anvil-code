@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import type { ProjectConventions } from './project-conventions.js';
+import { config } from './config.js';
+import { logger } from './logger.js';
 
 export interface PromptContextInput {
   conventions: ProjectConventions;
@@ -28,6 +30,12 @@ export interface PromptContextInput {
    * see repo-specific constraints (e.g. import path patterns) proactively.
    */
   repoPatterns?: string[];
+  /**
+   * v1.71 — override the whole-block byte budget (see config.rag.
+   * maxPromptContextBytes). Mainly for tests; production callers rely on the
+   * config default.
+   */
+  maxContextBytes?: number;
 }
 
 const MAX_BYTES_PER_FILE = 3 * 1024;  // 3KB per file (~700 tokens) — was 8KB; large repos fill 32k ctx
@@ -46,22 +54,29 @@ export function buildPromptContext(input: PromptContextInput): string {
   const onDiskPaths = input.ragFilePaths.filter(p => !recentPaths.has(p));
 
   const fullSources = readFullSources(onDiskPaths, input.projectRoot);
-  const sections: string[] = [];
+
+  // Sections carry a `prune` rank: 0 = essential (never dropped), higher =
+  // dropped first when the assembled block exceeds the byte budget (v1.71).
+  // RAG snippets are broadest/lowest-value, so they go first; the repo-map is
+  // next (it's an inventory the agent can partly reconstruct from sources).
+  // Everything load-bearing for correctness — conventions, files-to-edit,
+  // recently-modified state, the design, and learned patterns — is kept.
+  const sections: Array<{ text: string; prune: number }> = [];
 
   if (input.repoPatterns && input.repoPatterns.length > 0) {
     const list = input.repoPatterns.map(p => `- ${p}`).join('\n');
-    sections.push(
+    sections.push({ prune: 0, text:
       `# Repo-specific patterns (learned from previous tasks)\n` +
       `These validation errors were previously encountered and auto-fixed. ` +
       `Apply them proactively to avoid repeating the same mistakes:\n\n` +
       list
-    );
+    });
   }
 
-  sections.push(`# Project Conventions\n${input.conventions.summary}`);
+  sections.push({ prune: 0, text: `# Project Conventions\n${input.conventions.summary}` });
 
   if (input.repoMap && input.repoMap.trim()) {
-    sections.push(
+    sections.push({ prune: 2, text:
       `# Repo Map (high-level structure of THIS project)\n` +
       `Authoritative inventory of files and exported symbols available to reference. ` +
       `Do NOT invent methods, classes, or files that are not listed here. ` +
@@ -69,37 +84,77 @@ export function buildPromptContext(input: PromptContextInput): string {
       `but every symbol you reference must either appear below, be a standard-library/framework name, ` +
       `or be one you are creating in this same step.\n\n` +
       input.repoMap
-    );
+    });
   }
 
   if (input.newlySources && input.newlySources.length > 0) {
     const block = input.newlySources
       .map(({ path, content }) => `===== BEGIN MODIFIED: ${path} =====\n${content}\n===== END MODIFIED: ${path} =====`)
       .join('\n\n');
-    sections.push(
+    sections.push({ prune: 0, text:
       `# Recently modified by previous steps (CURRENT state — SUPERSEDES "Existing project files")\n` +
       `These files were just edited by earlier steps in THIS task. Their content here is the LATEST version. When modifying any of these files, base your output on THIS content, not on the older disk version. Preserve everything not directly affected by your current step.\n\n` +
       block
-    );
+    });
   }
 
   if (fullSources) {
-    sections.push(
+    sections.push({ prune: 0, text:
       `# Existing project files (READ-ONLY reference)\n` +
       `These are the CURRENT contents of files that may need modifying. They are reference material — do NOT replicate this structure or these markers in your output. Each output file you generate must contain ONLY its own code.\n\n` +
       fullSources
-    );
+    });
   }
 
   if (input.ragSnippets.trim()) {
-    sections.push(`# Related code snippets (READ-ONLY, for broader context)\n${input.ragSnippets}`);
+    sections.push({ prune: 3, text: `# Related code snippets (READ-ONLY, for broader context)\n${input.ragSnippets}` });
   }
 
   if (input.designContext?.trim()) {
-    sections.push(`# Architectural design\n${input.designContext}`);
+    sections.push({ prune: 0, text: `# Architectural design\n${input.designContext}` });
   }
 
-  return sections.join('\n\n');
+  return enforceBudget(sections, input.maxContextBytes ?? config.rag.maxPromptContextBytes);
+}
+
+/**
+ * v1.71 — keep the assembled context under a byte budget. Drops the highest
+ * `prune` rank first (RAG snippets, then repo-map); essential sections (rank 0)
+ * are never dropped even if that means exceeding the budget — sending a slightly
+ * oversized prompt of load-bearing content beats sending one with the
+ * files-to-edit pruned away. Logs whenever it drops anything (never silent).
+ */
+function enforceBudget(sections: Array<{ text: string; prune: number }>, maxBytes: number): string {
+  const SEP = '\n\n';
+  const totalBytes = (xs: Array<{ text: string }>) =>
+    xs.reduce((n, s) => n + Buffer.byteLength(s.text), 0) + Math.max(0, xs.length - 1) * SEP.length;
+
+  let kept = sections;
+  let total = totalBytes(kept);
+  if (total <= maxBytes) return kept.map(s => s.text).join(SEP);
+
+  const dropped: number[] = [];
+  // Prune ranks strictly descending so we always shed the lowest-value content
+  // first, and only as much as needed to fit.
+  const ranks = [...new Set(sections.map(s => s.prune).filter(r => r > 0))].sort((a, b) => b - a);
+  for (const rank of ranks) {
+    if (total <= maxBytes) break;
+    const before = total;
+    kept = kept.filter(s => s.prune !== rank);
+    total = totalBytes(kept);
+    dropped.push(rank);
+    logger.warn(
+      { rank, freedBytes: before - total, totalBytes: total, maxBytes },
+      'Prompt context over budget — pruned section to avoid model context overflow',
+    );
+  }
+  if (total > maxBytes) {
+    logger.warn(
+      { totalBytes: total, maxBytes },
+      'Prompt context still over budget after pruning all non-essential sections — sending essential content as-is',
+    );
+  }
+  return kept.map(s => s.text).join(SEP);
 }
 
 function readFullSources(filePaths: string[], projectRoot: string): string {

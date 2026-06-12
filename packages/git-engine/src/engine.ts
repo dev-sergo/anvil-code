@@ -84,6 +84,24 @@ export class GitEngine {
     }
   }
 
+  /**
+   * v1.71 — Return every path that differs from HEAD in the working tree:
+   * modified/created/deleted tracked files plus untracked files (respecting
+   * .gitignore). `git status` reports each changed file exactly once with
+   * repo-root-relative paths, matching the project-relative paths the
+   * orchestrator tracks in `writtenFiles`.
+   *
+   * Used as a commit-completeness safety net (H6 bug): a tool-calling agent can
+   * write a file to disk but omit it from its stated file list, leaving it
+   * untracked. Staging only the stated list left such files behind, and the
+   * next task's `git clean -fd` deleted them. Because each task branch is
+   * forked from a freshly-cleaned base, anything reported here is task output.
+   */
+  async listWorkingChanges(): Promise<string[]> {
+    const status = await this.git.status();
+    return status.files.map(f => f.path);
+  }
+
   async commitChanges(taskId: string, message: string, files: string[]): Promise<string> {
     logger.debug({ files }, 'Staging files for commit');
     await this.git.add(files);

@@ -68,8 +68,8 @@ describe('BUGFIX_SPEC — invariants', () => {
     expect(BUGFIX_SPEC.agentName).toBe('Fixer(tool-calling)');
     expect(BUGFIX_SPEC.agentRole).toBe('fixer');
   });
-  it('maxToolCalls=30, pruneHistory=true, emitPerFileEvents=false', () => {
-    expect(BUGFIX_SPEC.maxToolCalls).toBe(30);
+  it('maxToolCalls=50 (v1.71, was 30), pruneHistory=true, emitPerFileEvents=false', () => {
+    expect(BUGFIX_SPEC.maxToolCalls).toBe(50);
     expect(BUGFIX_SPEC.pruneHistory).toBe(true);
     expect(BUGFIX_SPEC.emitPerFileEvents).toBe(false);
   });
